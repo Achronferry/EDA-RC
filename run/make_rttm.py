@@ -22,6 +22,21 @@ args = parser.parse_args()
 filepaths = [line.strip() for line in open(args.file_list_hdf5)]
 filepaths.sort()
 
+def frames2rttm(session, frames, out_rttm_file):
+    
+    with open(out_rttm_file, 'w') as wf:
+        for spkid, frames in enumerate(a.T):
+            frames = np.pad(frames, (1, 1), 'constant')
+            changes, = np.where(np.diff(frames, axis=0) != 0)
+            fmt = "SPEAKER {:s} 1 {:7.2f} {:7.2f} <NA> <NA> {:s} <NA>"
+            for s, e in zip(changes[::2], changes[1::2]):
+                print(fmt.format(
+                        session,
+                        s * args.frame_shift * args.subsampling / args.sampling_rate,
+                        (e - s) * args.frame_shift * args.subsampling / args.sampling_rate,
+                        session + "_" + str(spkid)), file=wf)
+
+
 with open(args.out_rttm_file, 'w') as wf:
     for filepath in filepaths:
         session, _ = os.path.splitext(os.path.basename(filepath))

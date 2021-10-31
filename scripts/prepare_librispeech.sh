@@ -12,17 +12,17 @@
 # The composition will be done at stage 1 of ./run.sh
 
 stage=0
-dataset_name=$1 #(LibriSpeech, mini_LibriSpeech)
-dataset_dir=~/data_store/$dataset_name
+dataset_name=LibriSpeech #(LibriSpeech, mini_LibriSpeech)
+musan_root=~/data_store/musan
 
 # This script distributes simulated data under these directories
 simu_actual_dirs=(
-$PWD/data/local/diarization-data/$dataset_name
+/GPFS/data/chenyuyang/exp/RPE_EEND/local/diarization-data/$dataset_name
 )
 
 # simulation options
 simu_opts_overlap=yes
-simu_opts_num_speaker=4
+simu_opts_num_speaker=3
 simu_opts_sil_scale=2
 simu_opts_rvb_prob=0.5
 simu_opts_num_train=100000
@@ -33,6 +33,8 @@ simu_opts_max_utts=20
 . path.sh
 . parse_options.sh || exit
 
+dataset_dir=~/data_store/$dataset_name
+
 dev_nm=
 trn_nm=
 if [ $dataset_name = "mini_LibriSpeech" ]; then
@@ -40,7 +42,7 @@ if [ $dataset_name = "mini_LibriSpeech" ]; then
     trn_nm=train_clean_5
 elif [ $dataset_name = "LibriSpeech" ]; then
     dev_nm=dev_clean
-    trn_nm=train_clean_100
+    trn_nm=train_clean_360
 else
     echo "Illegal dataset name:${dataset_name}!" && exit
 fi
@@ -60,9 +62,12 @@ if [ $stage -le 0 ]; then
         scripts/data_prep.sh $dataset_dir/${trn_nm//_/-} data/local/prepared_data/$dataset_name/$trn_nm
         touch data/local/prepared_data/$dataset_name/$trn_nm/.done
     fi
-    if [ ! -d data/musan_bgnoise ]; then
-        echo "- unzip mini-musan-bgnoise"
-        tar xzf musan_bgnoise.tar.gz data/
+
+    if ! validate_data_dir.sh --no-text --no-feats data/musan_noise_bg; then
+        preprocess/make_musan.sh $musan_root data
+        utils/copy_data_dir.sh data/musan_noise data/musan_noise_bg
+        awk '{if(NR>1) print $1,$1}'  $musan_root/noise/free-sound/ANNOTATIONS > data/musan_noise_bg/utt2spk
+        utils/fix_data_dir.sh data/musan_noise_bg
     fi
     if [ ! -f data/simu_rirs_8k/.done ]; then
         echo "- prepare simu_rirs_8k"
@@ -94,10 +99,10 @@ if [ $stage -le 1 ]; then
 
     for simu_opts_sil_scale in 2; do
         for dset in $trn_nm $dev_nm; do
-            if [ "$dset" == "train_clean_100" ]; then
-                n_mixtures=${simu_opts_num_train}
-            else
+            if [ "$dset" == "dev_clean" ] || [ "$dset" == "dev_clean_2" ] ; then
                 n_mixtures=500
+            else
+                n_mixtures=${simu_opts_num_train}
             fi
             simuid=${dset}_ns${simu_opts_num_speaker}_beta${simu_opts_sil_scale}_${n_mixtures}
             # check if you have the simulation
@@ -107,7 +112,7 @@ if [ $stage -le 1 ]; then
                     $random_mixture_cmd --n_speakers $simu_opts_num_speaker --n_mixtures $n_mixtures \
                     --speech_rvb_probability $simu_opts_rvb_prob \
                     --sil_scale $simu_opts_sil_scale \
-                    data/local/prepared_data/$dataset_name/$dset data/musan_bgnoise data/simu_rirs_8k \
+                    data/local/prepared_data/$dataset_name/$dset data/musan_noise_bg data/simu_rirs_8k \
                     \> $simudir/.work/mixture_$simuid.scp
                 nj=100
                 mkdir -p $simudir/wav/$simuid
@@ -134,4 +139,29 @@ if [ $stage -le 1 ]; then
             fi
         done
     done
+fi
+
+if [ ${stage} -le 2 ]; then
+    ### Task dependent. You have to design training and dev sets by yourself.
+    ### But you can utilize Kaldi recipes in most cases
+    echo "stage 2: Feature Generation"
+    fbankdir=fbank
+    # Generate the fbank features; 
+    for dset in $trn_nm $dev_nm; do
+        if [ "$dset" == "dev_clean" ]; then
+                n_mixtures=500
+            else
+                n_mixtures=${simu_opts_num_train}
+        fi
+        simuid=${dset}_ns${simu_opts_num_speaker}_beta${simu_opts_sil_scale}_${n_mixtures}
+        preprocess/make_fbank.sh --cmd "$train_cmd" --nj 12 --write_utt2num_frames true --fbank_config conf/fbank.conf \
+            data/${dataset_name}/data/${simuid} exp/make_fbank/${dataset_name}/${simuid} $simu_actual_dirs/fbank/${simuid}
+        # utils/fix_data_dir.sh  data/${dataset_name}/data/${simuid}
+    done
+
+    # # subset of dev_set
+    # utils/subset_data_dir.sh data/${train_dev} 1000 data/${train_dev}_u1k
+
+    # # compute global CMVN
+    # compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
 fi

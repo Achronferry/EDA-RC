@@ -12,6 +12,7 @@ import subprocess
 import soundfile as sf
 import io
 from functools import lru_cache
+import kaldiio
 
 
 def load_segments(segments_file):
@@ -55,7 +56,7 @@ def load_wav_scp(wav_scp_file):
     return {x[0]: x[1] for x in lines}
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=5)
 def load_wav(wav_rxfilename, start=0, end=None):
     """ This function reads audio file and return data in numpy.float32 array.
         "lru_cache" holds recently loaded audio so that can be called
@@ -141,6 +142,20 @@ def extract_segments(wavs, segments=None):
             data, samplerate = load_wav(wavs[rec])
             yield rec, data
 
+def load_feats_scp(feats_file):
+    """ returns dictionary { recid: feats }  """
+    if not os.path.exists(feats_file):
+        return None
+    print(f"load fbank from {feats_file}")
+    # with ReadHelper(f'scp:{feats_file}') as reader:
+    #     data = { key:numpy_array for key, numpy_array in reader }
+    lines = [line.strip().split(None, 1) for line in open(feats_file)]
+    
+    return {x[0]: x[1] for x in lines}
+
+@lru_cache(maxsize=10)
+def load_feats(ark_trace):
+    return kaldiio.load_mat(ark_trace)
 
 class KaldiData:
     def __init__(self, data_dir):
@@ -156,7 +171,20 @@ class KaldiData:
         self.spk2utt = load_spk2utt(
                 os.path.join(self.data_dir, 'spk2utt'))
 
+        self.feats = load_feats_scp(
+                os.path.join(self.data_dir, 'feats.scp'))
+        
+        # self.rate = load_wav(list(self.wavs.values())[0])[1]
+        self.rate = 8000
+
+            
+        # print(self.segments)
+
     def load_wav(self, recid, start=0, end=None):
         data, rate = load_wav(
             self.wavs[recid], start, end)
         return data, rate
+
+    def load_feat(self, recid, start=0, end=None):
+        feat = load_feats(self.feats[recid])
+        return feat[start:end]

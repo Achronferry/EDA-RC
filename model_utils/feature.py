@@ -282,3 +282,51 @@ def get_labeledSTFT(
         return Y, T, S
     else:
         return Y, T
+
+
+
+def get_labeledfeat(
+        kaldi_obj,
+        rec, start, end, frame_size, frame_shift,
+        n_speakers=None,
+        use_speaker_id=False):
+    """ Extracts STFT and corresponding labels
+
+    """
+    Y = kaldi_obj.load_feat(rec, start, end)
+    rate = kaldi_obj.rate
+    filtered_segments = kaldi_obj.segments[rec]
+    # filtered_segments = kaldi_obj.segments[kaldi_obj.segments['rec'] == rec]
+    speakers = np.unique(
+        [kaldi_obj.utt2spk[seg['utt']] for seg
+         in filtered_segments]).tolist()
+    if n_speakers is None:
+        n_speakers = len(speakers)
+    T = np.zeros((Y.shape[0], n_speakers), dtype=np.int32)
+
+    if use_speaker_id:
+        all_speakers = sorted(kaldi_obj.spk2utt.keys())
+        S = np.zeros((Y.shape[0], len(all_speakers)), dtype=np.int32)
+
+    for seg in filtered_segments:
+        speaker_index = speakers.index(kaldi_obj.utt2spk[seg['utt']])
+        if use_speaker_id:
+            all_speaker_index = all_speakers.index(kaldi_obj.utt2spk[seg['utt']])
+        start_frame = np.rint(
+            seg['st'] * rate / frame_shift).astype(int)
+        end_frame = np.rint(
+            seg['et'] * rate / frame_shift).astype(int)
+        rel_start = rel_end = None
+        if start <= start_frame and start_frame < end:
+            rel_start = start_frame - start
+        if start < end_frame and end_frame <= end:
+            rel_end = end_frame - start
+        if rel_start is not None or rel_end is not None:
+            T[rel_start:rel_end, speaker_index] = 1
+            if use_speaker_id:
+                S[rel_start:rel_end, all_speaker_index] = 1
+
+    if use_speaker_id:
+        return Y, T, S
+    else:
+        return Y, T

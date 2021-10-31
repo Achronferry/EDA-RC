@@ -1,0 +1,4 @@
+# inference options
+model_type: RPEEEND
+chunk_size: 2000
+gpu: 1

@@ -1,0 +1,11 @@
+# adapt options
+model_type: EENDC
+gradclip: 5
+batchsize: 16
+max_epochs: 50
+num_frames: 500
+optimizer: adam
+lr: 1e-4
+gradient_accumulation_steps: 1
+seed: 777
+gpu: 4

@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import numpy as np
-from itertools import permutations
+from itertools import permutations, combinations
 
 """
 T: number of frames
@@ -37,7 +37,7 @@ def pit_loss(pred, label, label_delay=0):
     label_perms = [label[..., list(p)] for p
                     in permutations(range(label.shape[-1]))]
     losses = torch.stack(
-        [F.binary_cross_entropy_with_logits(
+        [F.binary_cross_entropy(
             pred[label_delay:, ...],
             l[:len(l) - label_delay, ...]) for l in label_perms])
     min_loss = losses.min() * (len(label) - label_delay)
@@ -83,7 +83,7 @@ def calc_diarization_error(pred, label, label_delay=0):
       res: dict of diarization error stats
     """
     label = label[:len(label) - label_delay, ...]
-    decisions = torch.sigmoid(pred[label_delay:, ...]) > 0.5
+    decisions = pred[label_delay:, ...] > 0.5
     n_ref = label.sum(axis=-1).long()
     n_sys = decisions.sum(axis=-1).long()
     res = {}
@@ -122,3 +122,51 @@ def report_diarization_error(ys, labels):
     stats_avg = {k:v/cnt for k,v in stats_avg.items()}
     return stats_avg
         
+
+def dcpit_loss(pred, label, label_delay=0):
+    """
+    Permutation-invariant training (PIT) cross entropy loss function.
+
+    Args:
+      pred:  (T,T,C,C)-shaped similarity matrices
+      label: (T,C)-shaped labels in {0,1}
+      label_delay: if label_delay == 5:
+            pred: 0 1 2 3 4 | 5 6 ... 99 100 |
+          label: x x x x x | 0 1 ... 94  95 | 96 97 98 99 100
+          calculated area: | <------------> |
+
+    Returns:
+      min_loss: (1,)-shape mean cross entropy
+      label_perms[min_index]: permutated labels
+    """
+
+    label_spk_num = label.sum(dim=-1)
+    label_similar = torch.matmul(label, label.transpose(0,1)) # （T,T)
+    dc_loss = torch.zeros((), device=pred.device)
+    active_frames = torch.zeros((), device=pred.device)
+    # min_index = torch.zeros_like(pred).cpu()
+
+    for t1 in range(label.shape[0]):
+      for t2 in range(t1, label.shape[0]):
+        num1, num2 = label_spk_num[t1], label_spk_num[t2]
+        if num1 == 0 or num2 == 0:
+          continue
+        
+        sim = label_similar[t1, t2]
+        local_pred = pred[t1, t2, :num1, :num2]
+        local_label_perms = []
+        for poss1 in combinations(range(num1), sim):
+            for poss2 in permutations(range(num2), sim):
+              cond = torch.zeros_like(local_pred)
+              for i,j in zip(poss1, poss2):
+                cond[i][j] = 1
+              local_label_perms.append(cond)
+
+        local_losses = torch.stack([F.mse_loss(local_pred, l) for l in local_label_perms])
+        dc_loss += local_losses.min()
+        active_frames += 1
+        # min_index[t1,t2, :num1, :num2] = local_label_perms[local_losses.argmin().detach()].cpu()
+
+    return dc_loss, active_frames  #, min_index
+      
+

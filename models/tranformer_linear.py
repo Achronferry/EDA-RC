@@ -12,7 +12,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 
 class TransformerLinearModel(nn.Module):
-    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False):
+    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False, num_predict=False):
         """ Self-attention-based diarization model.
 
         Args:
@@ -30,6 +30,11 @@ class TransformerLinearModel(nn.Module):
         self.n_units = n_units
         self.n_layers = n_layers
         self.has_pos = has_pos
+
+        if num_predict:
+            self.num_predictor = nn.Linear(n_units, n_speakers + 1)
+        else:
+            self.num_predictor = None
 
         self.src_mask = None
         self.encoder = nn.Linear(in_size, n_units)
@@ -54,7 +59,7 @@ class TransformerLinearModel(nn.Module):
         self.decoder.bias.data.zero_()
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, src, seq_lens, label=None, has_mask=False, activation=None):
+    def forward(self, src, seq_lens, label=None, has_mask=False):
         if has_mask:
             device = src.device
             if self.src_mask is None or self.src_mask.size(0) != src.size(1):
@@ -63,7 +68,7 @@ class TransformerLinearModel(nn.Module):
         else:
             self.src_mask = None
 
-        src_padding_mask = torch.zeros(src.shape[:-1], device=src.device).byte()  # (B*T)
+        src_padding_mask = torch.zeros(src.shape[:-1], device=src.device).bool()  # (B*T)
         for idx, l in enumerate(seq_lens):
             src_padding_mask[idx, l:] = 1
 
@@ -76,16 +81,19 @@ class TransformerLinearModel(nn.Module):
             # src: (T, B, E)
             src = self.pos_encoder(src)
         # output: (T, B, E)
-        output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_padding_mask)
+        enc_output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_padding_mask)
         # output: (B, T, E)
-        output = output.transpose(0, 1)
+        enc_output = enc_output.transpose(0, 1)
         # output: (B, T, C)
-        output = self.decoder(output)
+        if self.num_predictor is not None:
+            num_probs = self.num_predictor(enc_output)
+        else:
+            num_probs = None
+        output = self.decoder(enc_output)
 
-        if activation:
-            output = activation(output)
+        output = torch.sigmoid(output)
 
-        return output
+        return output, num_probs
 
     def get_attention_weight(self, src):
         # NOTE: NOT IMPLEMENTED CORRECTLY!!!

@@ -17,8 +17,11 @@ stage=0
 
 callhome_dir=~/data_store/LDC/LDC2001S97
 save_dir=data/callhome
-num_spk=4
+num_spk=2
 
+simu_actual_dirs=(
+/GPFS/data/chenyuyang/exp/RPE_EEND/local/diarization-data/callhome
+)
 
 # simulation options
 
@@ -32,7 +35,7 @@ if [ $stage -le 0 ]; then
     if ! validate_data_dir.sh --no-text --no-feats $save_dir/callhome1_spk${num_spk} \
         || ! validate_data_dir.sh --no-text --no-feats $save_dir/callhome2_spk${num_spk}; then
         # imported from https://github.com/kaldi-asr/kaldi/blob/master/egs/callhome_diarization/v1
-        scripts/make_callhome.sh $callhome_dir $save_dir
+        preprocess/make_callhome.sh $callhome_dir $save_dir
         # Generate two-speaker subsets
         for dset in callhome1 callhome2; do
             # Extract two-speaker recordings in wav.scp
@@ -84,4 +87,25 @@ if [ $stage -le 1 ]; then
         utils/data/get_reco2dur.sh $adapt_set
         rm -rf $save_dir/callhome1_spk${num_spk}
     fi
+fi
+
+
+
+if [ ${stage} -le 2 ]; then
+    ### Task dependent. You have to design training and dev sets by yourself.
+    ### But you can utilize Kaldi recipes in most cases
+    echo "stage 2: Feature Generation"
+    fbankdir=fbank
+    # Generate the fbank features; 
+    for dset in callhome1_spk${num_spk} callhome2_spk${num_spk}; do
+        # utils/fix_data_dir.sh  $save_dir/eval/$dset
+        preprocess/make_fbank.sh --cmd "$train_cmd" --nj 12 --write_utt2num_frames true --fbank_config conf/fbank.conf \
+            $save_dir/eval/$dset exp/make_fbank/callhome/$dset $simu_actual_dirs/fbank/$dset
+        # utils/fix_data_dir.sh  $save_dir/eval/$dset
+    done
+    # # subset of dev_set
+    # utils/subset_data_dir.sh data/${train_dev} 1000 data/${train_dev}_u1k
+
+    # # compute global CMVN
+    # compute-cmvn-stats scp:data/${train_set}/feats.scp data/${train_set}/cmvn.ark
 fi

@@ -1,0 +1,4 @@
+{
+    "python.pythonPath": "/DB/rhome/chenyuyang/miniconda3/envs/speech_torch/bin/python",
+    "python.formatting.provider": "yapf"
+}

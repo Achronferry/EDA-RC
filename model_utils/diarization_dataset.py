@@ -78,16 +78,32 @@ class KaldiDiarizationDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, i):
         rec, st, ed = self.chunk_indices[i]
-        Y, T = feature.get_labeledSTFT(
-            self.data,
-            rec,
-            st,
-            ed,
-            self.frame_size,
-            self.frame_shift,
-            self.n_speakers)
-        # Y: (frame, num_ceps)
-        Y = feature.transform(Y, self.input_transform)
+        if self.data.feats is None:
+            Y, T = feature.get_labeledSTFT(
+                self.data,
+                rec,
+                st,
+                ed,
+                self.frame_size,
+                self.frame_shift,
+                self.n_speakers)
+            # Y: (frame, num_ceps)
+            Y = feature.transform(Y, self.input_transform)
+        else:
+            Y, T = feature.get_labeledfeat(
+                self.data,
+                rec,
+                st,
+                ed,
+                self.frame_size,
+                self.frame_shift,
+                self.n_speakers)
+            # Y: (frame, num_ceps)
+            if self.input_transform == 'logmel23_mn':
+                Y = Y - np.mean(Y, axis=0)
+            else:
+                raise NotImplementedError
+
         # Y_spliced: (frame, num_ceps * (context_size * 2 + 1))
         Y_spliced = feature.splice(Y, self.context_size)
         # Y_ss: (frame / subsampling, num_ceps * (context_size * 2 + 1))

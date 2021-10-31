@@ -8,15 +8,17 @@ from tqdm import tqdm
 import logging
 
 import yamlargparse
+import yaml
 import torch
 from torch import optim
 from torch import nn
 from torch.utils.data import DataLoader
 
+from models.utils import constract_models
 from model_utils.gpu import set_torch_device
 from model_utils.scheduler import NoamScheduler
 from model_utils.diarization_dataset import KaldiDiarizationDataset, my_collate
-from model_utils.loss import batch_pit_loss, report_diarization_error
+from model_utils.loss import *
 
 
 
@@ -69,55 +71,8 @@ def train(args):
 
     # Prepare model
     Y, T = next(iter(train_set))
-    
-    if args.model_type == 'Transformer_Linear':
-        from models.tranformer_linear import TransformerLinearModel
-        model = TransformerLinearModel(
-                n_speakers=args.num_speakers,
-                in_size=Y.shape[1],
-                n_units=args.hidden_size,
-                n_heads=args.transformer_encoder_n_heads,
-                n_layers=args.transformer_encoder_n_layers,
-                dropout=args.transformer_encoder_dropout,
-                has_pos=False
-                )
-    elif args.model_type == 'Transformer_LSTM':
-        from models.tranformer_lstm import TransformerLSTMModel
-        model = TransformerLSTMModel(
-                n_speakers=args.num_speakers,
-                in_size=Y.shape[1],
-                n_units=args.hidden_size,
-                n_heads=args.transformer_encoder_n_heads,
-                n_layers=args.transformer_encoder_n_layers,
-                rnn_cell=args.rnn_cell,
-                dropout=args.transformer_encoder_dropout,
-                has_pos=False
-                )
-    elif args.model_type == 'Transformer_LSTM_attn':
-        from models.tranformer_lstm_attn import TransformerLSTMattnModel
-        model = TransformerLSTMattnModel(
-                n_speakers=args.num_speakers,
-                in_size=Y.shape[1],
-                n_units=args.hidden_size,
-                n_heads=args.transformer_encoder_n_heads,
-                n_layers=args.transformer_encoder_n_layers,
-                dropout=args.transformer_encoder_dropout,
-                has_pos=False
-                )
-    elif args.model_type == 'Transformer_RAT':
-        from models.tranformer_rat import TransformerRATModel
-        model = TransformerRATModel(
-                n_speakers=args.num_speakers,
-                in_size=Y.shape[1],
-                n_units=args.hidden_size,
-                n_heads=args.transformer_encoder_n_heads,
-                n_layers=args.transformer_encoder_n_layers,
-                window_size=args.window_size,
-                dropout=args.transformer_encoder_dropout,
-                has_pos=False
-                )
-    else:
-        raise ValueError('Possible model_type is "Transformer"')
+    model = constract_models(args, Y.shape[1], args.model_save_dir + "/param.yaml")
+
 
     if args.gpu == 0: # single gpu
         device = set_torch_device(args.gpu)
@@ -143,6 +98,12 @@ def train(args):
     else:
         raise ValueError(args.optimizer)
 
+    # For noam, we use noam scheduler
+    if args.optimizer == 'noam':
+        scheduler = NoamScheduler(optimizer,
+                                  args.hidden_size,
+                                  warmup_steps=args.noam_warmup_steps)
+
     # Init/Resume
     if args.initmodel:
         logger.info(f"Load model from {args.initmodel}")
@@ -150,8 +111,9 @@ def train(args):
     elif args.resume != 0:
         last_epoch_model = os.path.join(args.model_save_dir, f"transformer{args.resume}.th")
         model.load_state_dict(torch.load(last_epoch_model))
-        optim_filename = os.path.join(args.model_save_dir, f"{args.optimizer}_{args.resume}.info")
-        optimizer.load_state_dict(torch.load(optim_filename))
+        optimizer.load_state_dict(torch.load(os.path.join(args.model_save_dir, "last.optim")))
+        if args.optimizer == 'noam':
+            scheduler.load_state_dict(torch.load(os.path.join(args.model_save_dir, "last.sche")))
         logger.info(f"Load model from {last_epoch_model}")
 
     assert args.batchsize % args.gradient_accumulation_steps == 0
@@ -171,11 +133,6 @@ def train(args):
             collate_fn=my_collate
             )
 
-    # For noam, we use noam scheduler
-    if args.optimizer == 'noam':
-        scheduler = NoamScheduler(optimizer,
-                                  args.hidden_size,
-                                  warmup_steps=min(100000, int(args.noam_warmup_steps * len(train_iter) * args.max_epochs)))
     # Training
     # y: feats, t: label
     # grad accumulation is according to: https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/20
@@ -183,17 +140,23 @@ def train(args):
         model.train()
         # zero grad here to accumualte gradient
         optimizer.zero_grad()
-        loss_epoch = 0
+        loss_epoch, loss_nspk = 0, 0
         num_total = 0
         for step, (y, t) in tqdm(enumerate(train_iter), ncols=100, total=len(train_iter)):
             ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
             y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
             t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
-            output = model(y, seq_lens=ilens, label=t)
+            output, aux_output = model(y, seq_lens=ilens, label=t)
             output = [out[:ilen] for out, ilen in zip(output, ilens)]
             truth = [ti[:ilen] for ti, ilen in zip(t, ilens)]
             loss, label = batch_pit_loss(output, truth)
+            loss_epoch += loss.item()
             # clear graph here
+            if 'np' in args.model_type.lower():
+                aux_output = [out[:ilen] for out, ilen in zip(aux_output, ilens)]
+                spk_num_loss = batch_spknum_loss(aux_output, truth)
+                loss_nspk += spk_num_loss.item()
+                loss += spk_num_loss
             loss.backward()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -204,9 +167,9 @@ def train(args):
                     scheduler.step()
                 if args.gradclip > 0:
                     nn.utils.clip_grad_value_(model.parameters(), args.gradclip)
-            loss_epoch += loss.item()
             num_total += 1
         loss_epoch /= num_total
+        loss_nspk /= num_total
 
         model.eval()
         with torch.no_grad():
@@ -216,7 +179,7 @@ def train(args):
                 ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
                 y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
                 t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
-                output = model(y, seq_lens=ilens)
+                output, aux_output = model(y, seq_lens=ilens)
                 output = [out[:ilen] for out, ilen in zip(output, ilens)]
                 truth = [ti[:ilen] for ti, ilen in zip(t, ilens)]
 
@@ -224,6 +187,10 @@ def train(args):
                 stats = report_diarization_error(output, label)
                 for k, v in stats.items():
                     stats_avg[k] = stats_avg.get(k, 0) + v
+
+                if 'np' in args.model_type.lower():
+                    aux_output = [out[:ilen] for out, ilen in zip(aux_output, ilens)]
+                    stats_avg['num_acc'] = stats_avg.get('num_acc', 0) + report_spknum_acc(aux_output, truth, label_delay=0)
                 cnt += 1
             stats_avg = {k:v/cnt for k,v in stats_avg.items()}
             stats_avg['DER'] = stats_avg['diarization_error'] / stats_avg['speaker_scored'] * 100
@@ -232,11 +199,12 @@ def train(args):
 
         model_filename = os.path.join(args.model_save_dir, f"transformer{epoch}.th")
         torch.save(model.state_dict(), model_filename)
-        optim_filename = os.path.join(args.model_save_dir, f"{args.optimizer}_{epoch}.info")
-        torch.save(optimizer.state_dict(), optim_filename)
+        torch.save(optimizer.state_dict(), os.path.join(args.model_save_dir, "last.optim"))
+        if args.optimizer == 'noam':
+            torch.save(scheduler.state_dict(), os.path.join(args.model_save_dir, "last.sche"))
 
         logger.info(f"Epoch: {epoch:3d}, LR: {optimizer.param_groups[0]['lr']:.7f},\
-            Training Loss: {loss_epoch:.5f}, Dev Stats: {stats_avg}")
+            Training Loss: {loss_epoch:.5f}, Training n_speaker Loss: {loss_nspk:.5f}, Dev Stats: {stats_avg}")
 
     logger.info('Finished!')
 
@@ -245,6 +213,11 @@ if __name__=='__main__':
     parser = yamlargparse.ArgumentParser(description='EEND training')
     parser.add_argument('-c', '--config', help='config file path',
                         action=yamlargparse.ActionConfigFile)
+    parser.add_argument('-c2', '--config2', help='config file path',
+                        action=yamlargparse.ActionConfigFile)
+    parser.add_argument('-f', '--feature_config', help='feature config file path',
+                        action=yamlargparse.ActionConfigFile)
+
     parser.add_argument('train_data_dir',
                         help='kaldi-style data dir used for training.')
     parser.add_argument('valid_data_dir',
@@ -279,8 +252,11 @@ if __name__=='__main__':
                              ' for uni-directional rnn to see in the future')
     parser.add_argument('--hidden-size', default=256, type=int,
                         help='number of lstm output nodes')
-    parser.add_argument('--window-size', default=5, type=int,
-                        help='number of relative positions, only for RAT')
+    parser.add_argument('--in-size', default=None, type=int)
+    parser.add_argument('--max-relative-position', default=2, type=int,
+                        help='number of relative positions, only for RP')
+    parser.add_argument('--gap', default=100, type=int,
+                        help='gap of different relations, only for RP')
     parser.add_argument('--rnn-cell', default='LSTM', type=str,
                         help='cell type, only for LSTM')
     parser.add_argument('--context-size', default=0, type=int)

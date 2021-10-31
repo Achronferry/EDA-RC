@@ -1,0 +1,11 @@
+# adapt options
+model_type: RPEEEND
+gradclip: 5
+batchsize: 32
+num_frames: 500
+optimizer: adam
+lr: 1e-4
+gradient_accumulation_steps: 1
+noam_warmup_steps: 100000
+seed: 777
+gpu: 4
