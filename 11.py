@@ -22,9 +22,18 @@
 # #         print(numpy_array.shape)
 # #         input()
 
-import torch
-# a = torch.zeros((3,5,5))
-# b = torch.randn((3,5,5)) > 0.5
+# import torch
+# import numpy as np
+# a = torch.randn((3,5,5))
+# b = torch.tensor([2,3,0])
+# c = torch.nonzero(b).squeeze(-1)
+# d = torch.zeros_like(a)
+# e = torch.index_select(a,0,c)
+# print(a)
+# print(e)
+# print(d.index_put((c,),e))
+
+# print([float(i) for i in '1_1_1'.split("_")])
 # print(b)
 # c = b.sum(dim = -1).sum(dim=-1).sum(dim=-1)
 # d = torch.range(1,c).float()
@@ -40,19 +49,25 @@ import torch
 # print(b)
 # print(b.sum(axis=-1))
 
-a = 'fix_len_as'
-b = 'fix_len_2014'
-c = 'fix_len_'
-d = 'qwq'
-e = 'fix_len_2aqrdqa'
-import re
-assert re.match('fix_len_\d+$',d)
-print(re.match('fix_len_\d+$',b))
-# b = torch.tensor([3,2,4])
-# a[range(a.shape[0]), b] = 1
-# print(a)
+# a = 'fix_len_as'
+# b = 'fix_len_2014'
+# c = 'fix_len_'
+# d = 'qwq'
+# e = 'fix_len_2aqrdqa'
+# import re
 
-# a = torch.ones(5)
-# b = torch.zeros(1)
-# c = torch.tensor([6])
-# print(torch.cat([b,a,c], dim=0))
+# import torch
+# assert re.match('fix_len_\d+$',d)
+# print(re.match('fix_len_\d+$',b))
+# # b = torch.tensor([3,2,4])
+# # a[range(a.shape[0]), b] = 1
+# # print(a)
+
+
+# from transformers.models import wav2vec2
+
+import torch
+
+
+x  = torch.ones((4,5))
+print(x[2:7])

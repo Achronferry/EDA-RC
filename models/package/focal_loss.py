@@ -12,7 +12,7 @@ def focal_loss(pred, target, alpha=None, gamma=2, reduce='mean'):
     '''
     pt = pred.view(-1)
     tg = target.view(-1).float()
-    assert pt.shape[0] == tg.shape[0]
+    assert pt.shape[0] == tg.shape[0], f"{pt.shape}, {tg.shape}"
     focal_p = (1 - pt.detach()) ** gamma
     focal_n = pt.detach() ** gamma
     pos_part = tg * focal_p * (pt + 1e-9).log()

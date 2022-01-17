@@ -23,9 +23,9 @@ simu_actual_dirs=(
 # simulation options
 simu_opts_overlap=yes
 simu_opts_num_speaker=3
-simu_opts_sil_scale=2
+simu_opts_sil_scale=5
 simu_opts_rvb_prob=0.5
-simu_opts_num_train=100000
+simu_opts_num_train=2000
 simu_opts_min_utts=10
 simu_opts_max_utts=20
 
@@ -97,7 +97,7 @@ if [ $stage -le 1 ]; then
         make_mixture_cmd=preprocess/make_mixture.py
     fi
 
-    for simu_opts_sil_scale in 2; do
+    for simu_opts_sil_scale in $simu_opts_sil_scale; do
         for dset in $trn_nm $dev_nm; do
             if [ "$dset" == "dev_clean" ] || [ "$dset" == "dev_clean_2" ] ; then
                 n_mixtures=500

@@ -6,10 +6,13 @@ import itertools
 import copy
 
 class RNN_Clustering(nn.Module):
-    def __init__(self, n_units, n_speakers, rnn_cell='GRU'):
+    def __init__(self, n_units, n_speakers, rnn_cell='GRU', dropout=0.2):
         super(RNN_Clustering, self).__init__()
         self.n_speakers = n_speakers
-        self.mixer = getattr(nn, f"{rnn_cell}Cell")(n_units, n_units)
+        if rnn_cell == 'reluRNN':
+            self.mixer = nn.RNNCell(n_units, n_units, nonlinearity='relu')
+        else:
+            self.mixer = getattr(nn, f"{rnn_cell}Cell")(n_units, n_units)
         self.rnn_init_hidden = nn.Parameter(torch.zeros(1, n_units))
 
     def forward(self, spk_emb, label=None):
@@ -48,12 +51,17 @@ class RNN_Clustering(nn.Module):
                         continue
                     i_valid = i[0][:i[1]]
                     i_prob = torch.softmax(torch.mm(i_valid, bh.transpose(0,1)), dim=-1)
-                    i_perms = [torch.stack(x, dim=0).float() for x in itertools.permutations(
-                                            torch.masked_select(torch.diag(i[2]), i[2].unsqueeze(-1).bool()).view((-1,i[2].shape[-1])))]
-                    i_losses = torch.stack([F.binary_cross_entropy(i_prob, x)
+                    # i_perms = [torch.stack(x, dim=0).float() for x in itertools.permutations(
+                    #                         torch.masked_select(torch.diag(i[2]), i[2].unsqueeze(-1).bool()).view((-1,i[2].shape[-1])))]
+                    # i_losses = torch.stack([F.binary_cross_entropy(i_prob, x)
+                    #                         for x in i_perms], dim=0)
+                    # i_loss = torch.min(i_losses)
+                    # i_label = i_perms[i_losses.argmin()].argmax(dim=-1)
+                    i_perms = [torch.stack(x, dim=0) for x in itertools.permutations(torch.nonzero(i[2]).squeeze(-1))]
+                    i_losses = torch.stack([F.nll_loss(i_prob.log(), x)
                                             for x in i_perms], dim=0)
                     i_loss = torch.min(i_losses)
-                    i_label = i_perms[i_losses.argmin()].argmax(dim=-1)
+                    i_label = i_perms[i_losses.argmin()]
                     
                     step_inp.append(i_valid)
                     prev_hiddens.append(torch.index_select(bh, 0, i_label))
@@ -153,7 +161,7 @@ class RNN_Clustering(nn.Module):
                     new_label = torch.masked_select(new_label, avail_mask)
                     next_h = next_h[torch.nonzero(avail_mask, as_tuple=True)]
                     # next_h = torch.masked_select(next_h, avail_h)
-                    new_beams.append(b.clone_and_apply(s, next_h, new_label))
+                    new_beams.append(b.clone_and_apply(s, next_h, new_label,i))
 
                 new_beams.sort(key=lambda x: x.score, reverse=True)
             beams = new_beams[:beam_size]
@@ -162,6 +170,7 @@ class RNN_Clustering(nn.Module):
                 
 
         return beams
+
 
 class BeamState:
     '''States for beam search decoding.'''
@@ -173,6 +182,7 @@ class BeamState:
         self.score = 0.
         self.pred = []
         self.T = 0
+        self.pred_id = []
     
     def copy(self):
         new_beam = BeamState(self.device)
@@ -180,17 +190,19 @@ class BeamState:
         new_beam.cluster_embs = copy.deepcopy(self.cluster_embs)
         new_beam.score = self.score
         new_beam.pred = copy.copy(self.pred)
+        new_beam.pred_id = copy.copy(self.pred_id)
         new_beam.T = self.T   
         return new_beam     
 
 
 
-    def clone_and_apply(self, score, hidden_states, pred_label):
+    def clone_and_apply(self, score, hidden_states, pred_label, pred_id):
         new_state = self.copy()
         new_state.T += 1
         new_state.score += score
         new_state.hidden_states = hidden_states
         new_state.pred.append(pred_label)
+        new_state.pred_id.append(pred_id)
         
         return new_state
 
@@ -203,4 +215,18 @@ class BeamState:
 
 
 if __name__=='__main__':
-    pass
+    frame_emb = torch.randn((4,25, 256))
+    seq_len = torch.tensor([10, 0, 25,1], dtype=torch.int)
+    label = (torch.randn((4,25, 3)) > 0.6).long()
+    for i,j in enumerate(seq_len):
+        label[i,j:] = 0
+    # truth_num = torch.sum(label.long(), dim=-1)
+    # l = torch.zeros_like(label)
+    # l = l.scatter(dim=2, index=truth_num, src=torch.ones_like(label))
+    # print(label)
+    # print(l)
+    # input()
+
+    dec = frameRNN_dec(256, n_speakers=3)
+    dec(frame_emb, seq_len, label)
+    pass 

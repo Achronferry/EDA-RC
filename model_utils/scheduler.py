@@ -13,9 +13,10 @@ class NoamScheduler(_LRScheduler):
         warmup_steps: int
             The number of steps to linearly increase the learning rate.
     """
-    def __init__(self, optimizer, d_model, warmup_steps, last_epoch=-1):
+    def __init__(self, optimizer, d_model, warmup_steps, max_steps=0, last_epoch=-1):
         self.d_model = d_model
         self.warmup_steps = warmup_steps
+        self.max_steps = max_steps
         super(NoamScheduler, self).__init__(optimizer, last_epoch)
 
         # the initial learning rate is set as step = 1
@@ -26,7 +27,7 @@ class NoamScheduler(_LRScheduler):
         print(self.d_model)
 
     def get_lr(self):
-        last_epoch = max(1, self.last_epoch)
+        last_epoch = max(1, self.last_epoch) #* (self.warmup_steps*50/self.max_steps)
         scale = self.d_model ** (-0.5) * min(last_epoch ** (-0.5), last_epoch * self.warmup_steps ** (-1.5))
+            # scale = self.d_model ** (-0.5) * min((self.warmup_steps+(last_epoch-self.warmup_steps)*((self.warmup_steps*50-self.warmup_steps)/(self.max_steps-self.warmup_steps))) ** (-0.5), last_epoch * self.warmup_steps ** (-1.5))
         return [base_lr * scale for base_lr in self.base_lrs]
-

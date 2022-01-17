@@ -40,7 +40,7 @@ if [ $stage -le 0 ]; then
         for dset in callhome1 callhome2; do
             # Extract two-speaker recordings in wav.scp
             copy_data_dir.sh $save_dir/${dset} $save_dir/${dset}_spk${num_spk}
-            utils/filter_scp.pl <(awk '{if($2<='${num_spk}') print;}'  $save_dir/${dset}/reco2num_spk) \
+            utils/filter_scp.pl <(awk '{if($2=='${num_spk}') print;}'  $save_dir/${dset}/reco2num_spk) \
                 $save_dir/${dset}/wav.scp > $save_dir/${dset}_spk${num_spk}/wav.scp
             # Regenerate segments file from fullref.rttm
             #  $2: recid, $4: start_time, $5: duration, $8: speakerid

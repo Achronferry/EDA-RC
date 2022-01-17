@@ -153,7 +153,7 @@ def load_feats_scp(feats_file):
     
     return {x[0]: x[1] for x in lines}
 
-@lru_cache(maxsize=10)
+@lru_cache(maxsize=5)
 def load_feats(ark_trace):
     return kaldiio.load_mat(ark_trace)
 

@@ -1,8 +1,10 @@
 # inference options
 model_type: EENDC
-chunk_size: 2000
+chunk_size: 2000000
 gpu: 1
-change_mode: full
-beam_size: 3
-change_point_file: exp/LibriSpeech_3/EENDC/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_all/change_points.h5
-
+change_mode: none
+beam_size: 5
+# change_point_file: exp/LibriSpeech_3/EENDC/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_all/change_points.h5
+# change_point_file: data/LibriSpeech/data/dev_clean_ns3_beta2_500/pitch_tracks.h5
+# change_point_file: exp/LibriSpeech_3/EENDC/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_all/adapt_callhome_3/change_points.h5
+# change_point_file: data/callhome/eval/callhome2_spk3/scd_res.h5

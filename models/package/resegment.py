@@ -2,33 +2,37 @@ import torch
 from torch import tensor
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.modules.activation import ReLU
+
+
+def normalize(batch_v):
+    return batch_v / (torch.norm(batch_v, p=2, dim=-1) + 1e-9).unsqueeze(-1)
 
 class num_pred_seg(nn.Module):
     def __init__(self, n_units, n_speakers=3):
         super(num_pred_seg, self).__init__()
-        self.num_predictor = nn.Sequential(nn.Linear(n_units, n_speakers + 1), 
-                                            nn.Sigmoid())
+        self.num_predictor = nn.Linear(n_units, 1)
 
 
     def forward(self, seg_emb, seq_len=None, label=None, th=0.5):
         num_prob = self.num_predictor(seg_emb)
+        num_prob = num_prob.squeeze(-1)
 
         if label is not None:  
-            truth_num = torch.sum(label.long(), dim=-1, keepdim=True)
-            l = torch.zeros_like(num_prob)
-            l = l.scatter(dim=2, index=truth_num, src=torch.ones_like(num_prob))
+            truth_num = torch.sum(label.long(), dim=-1).float()
+            # l = torch.zeros_like(num_prob)
+            # l = l.scatter(dim=2, index=truth_num, src=torch.ones_like(num_prob))
             num_pred_loss = []
-            for y, t, sample_len in zip(num_prob, l, seq_len):
+            for y, t, sample_len in zip(num_prob, truth_num, seq_len):
                 y, t = y[:sample_len], t[:sample_len]
-                num_pred_loss.append(F.binary_cross_entropy(y, t))
+                num_pred_loss.append(F.mse_loss(y, t))
             num_pred_loss = torch.stack(num_pred_loss, dim=0)
             return num_pred_loss
         else:
-            pred = torch.argmax(num_prob, dim=-1)
+            pred = torch.round(num_prob)
             change_points = F.pad((torch.abs(pred[:, 1:] - pred[:, :-1]) != 0).float(), pad=(1, 0))
+            # change_points = F.pad((torch.abs(num_prob[:, 1:] - num_prob[:, :-1]) >= 0.2).float(), pad=(1, 0))
             return change_points, pred
-
-
 
 
 
@@ -66,9 +70,6 @@ class vec_sim_seg(nn.Module):
 
     def forward(self, seg_emb, seq_len, label=None, th=0.5):
 
-        def normalize(batch_v):
-            return batch_v / (torch.norm(batch_v, p=2, dim=-1) + 1e-9).unsqueeze(-1)
-
         trans_seg = self.input_trans(seg_emb)
         trans_seg = normalize(trans_seg)
 
@@ -87,6 +88,52 @@ class vec_sim_seg(nn.Module):
 
 
 from models.package.focal_loss import focal_loss
+
+class pool_seg(nn.Module):
+    def __init__(self, n_units):
+        super(pool_seg, self).__init__()
+        self.conv_layer = nn.Sequential(
+            nn.Conv1d(n_units, n_units, kernel_size=3, stride=1, padding=1),
+            nn.ReLU()
+        )
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(n_units),
+            nn.Linear(n_units, 1),
+            nn.Sigmoid()
+        )
+
+
+    def forward(self, seg_emb, seq_len, label=None, th=0.5):
+        '''
+        seg_emb: B, T, D
+        label: B, T, N_spk
+        '''
+
+
+        
+        conv_out = self.conv_layer(seg_emb.transpose(1,2)).transpose(1,2) #B, T-2, D
+        change_prob = self.classifier(conv_out).squeeze(-1)
+
+        if label is not None:
+            change_prob = [i[:l] for i,l in zip(change_prob, seq_len)]
+            change_points =  F.pad((torch.abs(label[:, 1:] - label[:, :-1]).sum(dim=-1) != 0).float(), pad=(1, 0))
+
+            change_label = torch.max_pool1d(change_points.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
+            change_label = [i[:l] for i,l in zip(change_label, seq_len)]
+
+
+            seg_loss = [focal_loss(i, j, gamma=2, alpha=0.8) for i,j in zip(change_prob, change_label)]
+            seg_loss = torch.stack(seg_loss, dim=0)
+            return seg_loss
+        else:
+            right_peak = change_prob[: ,1:] > change_prob[: , :1]
+            left_peak = change_prob[: , :1] >= change_prob[: ,1:]
+            peak = F.pad(right_peak[:,:1] & left_peak[:, 1:], pad=(1, 1))
+            change_peaks = torch.masked_fill(change_prob, ~peak, 0)
+            return change_peaks > th
+
+
+
 class lstm_seg(nn.Module):
     def __init__(self, n_units):
         super(lstm_seg, self).__init__()
@@ -203,7 +250,7 @@ class lstm_seg_v2(nn.Module):
 
 
 if __name__=='__main__':
-    mdl = vec_sim_seg(256)
+    mdl = pool_seg(256)
     input_emb = torch.rand((4,200,256))
     seq_len = torch.tensor([199,58,52,200])
     label = (torch.rand((4,200,3)) > 0.5).long()

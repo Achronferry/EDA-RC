@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from models.package.spk_extractor import spk_extractor
 from models.package.rnn_cluster import RNN_Clustering
-from models.package.resegment import vec_sim_seg, num_pred_seg, lstm_seg, lstm_seg_v2, lstm_seg_v2_rd
+from models.package.resegment import vec_sim_seg, num_pred_seg, lstm_seg, lstm_seg_v2, lstm_seg_v2_rd, pool_seg
 
 class EENDC(nn.Module):
     def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, 
@@ -59,10 +59,11 @@ class EENDC(nn.Module):
         self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
 
 
-        # self.segmenter = vec_sim_seg(n_units)
-        self.segmenter = num_pred_seg(n_units)
-        self.decoder = spk_extractor(n_units, n_speakers)
-        self.rnn_cluster = RNN_Clustering(n_units, n_speakers)
+        self.segmenter = pool_seg(n_units)
+        # self.segmenter = num_pred_seg(n_units)
+
+        self.decoder = spk_extractor(n_units, n_speakers, dropout=dropout)
+        self.rnn_cluster = RNN_Clustering(n_units, n_speakers, dropout=dropout)
 
 
         self.init_weights()
@@ -80,7 +81,7 @@ class EENDC(nn.Module):
         # self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, seq_lens, label=None, change_points=None, has_mask=False,
-                th=0.5, beam_size=1):
+                th=0.5, beam_size=1, chunk_size=2000):
         device = src.device
         max_len = src.shape[1]
 
@@ -105,8 +106,8 @@ class EENDC(nn.Module):
             src = self.pos_encoder(src)
         # output: (T, B, E)
         if label is None:
-            src_chunked = torch.split(src, 2000, dim=0)
-            mask_chunked = torch.split(src_padding_mask, 2000, dim=1)
+            src_chunked = torch.split(src, chunk_size, dim=0)
+            mask_chunked = torch.split(src_padding_mask, chunk_size, dim=1)
             enc_output = [self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m) 
                             for s, m in zip(src_chunked, mask_chunked)]
             enc_output = torch.cat(enc_output, dim=0)
@@ -126,9 +127,9 @@ class EENDC(nn.Module):
             all_losses = []
 
             # Train Re-Segmenter
-            # if self.mode != 'clst':
-            #    reseg_loss = self.segmenter(enc_output, seq_lens, label=label)
-            #    all_losses.append(reseg_loss)
+            if self.mode != 'clst':
+               reseg_loss = self.segmenter(enc_output, seq_lens, label=label)
+               all_losses.append(reseg_loss)
             
             if self.mode != 'seg':
                 change_points = F.pad((torch.abs(label[:, 1:] - label[:, :-1]).sum(dim=-1) != 0), pad=(1, 0))
@@ -161,8 +162,8 @@ class EENDC(nn.Module):
 
                 ## Extractor loss
                 prob_loss = []
-                for seq_emb, seq_prob, truth_num, seq_len in zip(spk_emb, ext_prob, ctmpr_spks, zip_seq_lens):
-                    seq_emb, seq_prob, truth_num = seq_emb[:seq_len], seq_prob[:seq_len], truth_num[:seq_len]
+                for seq_prob, truth_num, seq_len in zip(ext_prob, ctmpr_spks, zip_seq_lens):
+                    seq_prob, truth_num = seq_prob[:seq_len], truth_num[:seq_len]
 
                     p_label = torch.zeros_like(seq_prob)
                     for l in range(p_label.shape[0]):
@@ -183,14 +184,12 @@ class EENDC(nn.Module):
             stat_outputs = {}
 
             # Re-Segmenter
-            # change_points_ = self.segmenter(enc_output, seq_lens, th=th)
-            # change_points_, num_pred_ = self.segmenter(enc_output, seq_lens, th=th)
+            if change_points is None:
+                change_points_ = self.segmenter(enc_output, seq_lens, th=th)
+                stat_outputs["change_points"] = change_points_ # B, T
+                # stat_outputs["num_pred"] = num_pred_
+                change_points = change_points_
 
-            # stat_outputs["change_points"] = change_points_ # B, T
-            # stat_outputs["num_pred"] = num_pred_
-            # if change_points is None:
-            #    change_points = change_points_
-            
             change_points = [torch.cat(
                                 [torch.tensor([0], device=device),
                                 torch.nonzero(i[:n]).squeeze(-1),

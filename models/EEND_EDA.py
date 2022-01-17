@@ -4,15 +4,17 @@
 
 import numpy as np
 import math
-
+import os,sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from model_utils.loss import batch_pit_loss
+from models.package.spk_extractor import eda_spk_extractor
 
-
-class TransformerLinearModel(nn.Module):
-    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False, num_predict=False):
+class EEND_EDA(nn.Module):
+    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.2, has_pos=False, num_predict=False):
         """ Self-attention-based diarization model.
 
         Args:
@@ -23,7 +25,7 @@ class TransformerLinearModel(nn.Module):
           n_layers (int): Number of transformer-encoder layers
           dropout (float): dropout ratio
         """
-        super(TransformerLinearModel, self).__init__()
+        super(EEND_EDA, self).__init__()
         self.n_speakers = n_speakers
         self.in_size = in_size
         self.n_heads = n_heads
@@ -31,10 +33,6 @@ class TransformerLinearModel(nn.Module):
         self.n_layers = n_layers
         self.has_pos = has_pos
 
-        if num_predict:
-            self.num_predictor = nn.Linear(n_units, n_speakers + 1)
-        else:
-            self.num_predictor = None
 
         self.src_mask = None
         self.encoder = nn.Linear(in_size, n_units)
@@ -43,8 +41,12 @@ class TransformerLinearModel(nn.Module):
             self.pos_encoder = PositionalEncoding(n_units, dropout)
         encoder_layers = TransformerEncoderLayer(n_units, n_heads, dim_feedforward, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
-        self.decoder = nn.Linear(n_units, n_speakers)
 
+        self.decoder = eda_spk_extractor(n_units, n_speakers, dropout=dropout)
+        ###
+#        from models.package.resegment import num_pred_seg
+#        self.segmenter = num_pred_seg(n_units)
+        ###
         self.init_weights()
 
     def _generate_square_subsequent_mask(self, sz):
@@ -56,10 +58,9 @@ class TransformerLinearModel(nn.Module):
         initrange = 0.1
         self.encoder.bias.data.zero_()
         self.encoder.weight.data.uniform_(-initrange, initrange)
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(-initrange, initrange)
 
-    def forward(self, src, seq_lens, label=None, has_mask=False):
+    def forward(self, src, seq_lens, label=None,  change_points=None, has_mask=False,
+                th=0.5, beam_size=1, chunk_size=2000):
         if has_mask:
             device = src.device
             if self.src_mask is None or self.src_mask.size(0) != src.size(1):
@@ -81,19 +82,62 @@ class TransformerLinearModel(nn.Module):
             # src: (T, B, E)
             src = self.pos_encoder(src)
         # output: (T, B, E)
-        enc_output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_padding_mask)
+        if label is None:
+            src_chunked = torch.split(src, chunk_size, dim=0)
+            mask_chunked = torch.split(src_padding_mask, chunk_size, dim=1)
+            enc_output = [self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m) 
+                            for s, m in zip(src_chunked, mask_chunked)]
+            enc_output = torch.cat(enc_output, dim=0)
+        else:
+            enc_output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_padding_mask)
         # output: (B, T, E)
         enc_output = enc_output.transpose(0, 1)
-        # output: (B, T, C)
-        if self.num_predictor is not None:
-            num_probs = self.num_predictor(enc_output)
+
+
+
+        if label is not None:
+            attractors, active_prob = self.decoder(enc_output, seq_lens) #(B,C,E)
+            output = torch.sigmoid(torch.bmm(enc_output, attractors.transpose(-1, -2))) # (B, T, C)
+            
+            all_losses = []
+            spks_num = label.long().sum(dim=-1, keepdim=False).max(dim=-1, keepdim=False).values # (B, )
+            act_label = torch.zeros_like(active_prob)
+            for l in range(act_label.shape[0]):
+                act_label[l, :spks_num[l]] = 1
+
+            prob_loss = torch.stack([F.binary_cross_entropy(p, l) 
+                        for p,l in zip(active_prob, act_label)])
+
+            all_losses.append(prob_loss)
+
+            valid_output = nn.utils.rnn.pad_sequence(
+                            [o[:, :n].transpose(-1,-2) for o,n in zip(output, spks_num)]
+                            , batch_first=True).transpose(-2,-1)
+            valid_output = F.pad(valid_output, pad=(0, label.shape[-1]-valid_output.shape[-1]))
+            truth = [l[:ilen] for l,ilen in zip(label, seq_lens)]
+            pred = [o[:ilen] for o,ilen in zip(valid_output, seq_lens)]
+            pit_loss, _ = batch_pit_loss(pred, truth)
+            all_losses.append(pit_loss)
+            return all_losses
         else:
-            num_probs = None
-        output = self.decoder(enc_output)
+            enc_chunked = torch.split(enc_output, chunk_size, dim=1)
+            seq_len_chunked = [m.sum(dim=1) for m in torch.split(~src_padding_mask, chunk_size, dim=1)]
+            output, stat_outputs = [], {}
+            for i, l in zip(enc_chunked, seq_len_chunked):
+                attractors, active_prob = self.decoder(i, l)
+                output.append(torch.sigmoid(torch.bmm(i, attractors.transpose(-1, -2))))
+                
+                spks_num = [np.where(p_ < th)[0] for p_ in active_prob.cpu().detach().numpy()]
+                spks_num = [i[0] if i.size else None for i in spks_num]
 
-        output = torch.sigmoid(output)
+                for idx, n in enumerate(spks_num):
+                    output[-1][idx, :, n:] = 0
 
-        return output, num_probs
+            output = torch.cat(output, dim=1)
+
+            return (output > th), stat_outputs
+
+
 
     def get_attention_weight(self, src):
         # NOTE: NOT IMPLEMENTED CORRECTLY!!!
@@ -159,3 +203,4 @@ if __name__ == "__main__":
     print("Model output:", model(input).size())
     print("Model attention:", model.get_attention_weight(input).size())
     print("Model attention sum:", model.get_attention_weight(input)[0][0][0].sum())
+    

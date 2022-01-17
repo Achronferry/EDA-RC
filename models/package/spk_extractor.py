@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class spk_extractor(nn.Module):
-    def __init__(self, hidden_size, max_speaker_num):
+    def __init__(self, hidden_size, max_speaker_num, dropout=0.2):
         super(spk_extractor, self).__init__()
         assert max_speaker_num > 0
         self.speaker_limit = max_speaker_num + 1
@@ -13,6 +13,7 @@ class spk_extractor(nn.Module):
         self.discriminator = nn.Sequential(nn.Linear(hidden_size, 1),
                                             nn.Sigmoid())
         self.project = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, hidden_states): 
         '''
@@ -21,6 +22,7 @@ class spk_extractor(nn.Module):
         '''
         self.attractor.flatten_parameters()
         batch_size, max_len, hidden_dim = hidden_states.shape
+        hidden_states = self.dropout(hidden_states)
         h_0 = self.decoder_cell_init(hidden_states).view(-1, hidden_dim).unsqueeze(0)
         c_0 = torch.zeros_like(h_0)
 
@@ -36,7 +38,7 @@ class spk_extractor(nn.Module):
 
 
 class eda_spk_extractor(nn.Module):
-    def __init__(self, hidden_size, max_speaker_num):
+    def __init__(self, hidden_size, max_speaker_num, dropout=0.1):
         super(eda_spk_extractor, self).__init__()
         assert max_speaker_num > 0
         self.speaker_limit = max_speaker_num + 1
@@ -46,23 +48,39 @@ class eda_spk_extractor(nn.Module):
         self.discriminator = nn.Sequential(nn.Linear(hidden_size, 1),
                                             nn.Sigmoid())
         self.project = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, hidden_states, lengths): 
         '''
         hiddtn_states: Tensor B,T,D
         extract spk embs for the total sequence
         '''
-        self.encoder.flatten_parameters()
+        self.rnn_encoder.flatten_parameters()
         self.attractor.flatten_parameters()
         batch_size, max_len, hidden_dim = hidden_states.shape
-        shuffled_inp = hidden_states.index_select(1, torch.randperm(max_len))
-        padded_inp = nn.utils.rnn.pack_padded_sequence(shuffled_inp, lengths, batch_first=True, enforce_sorted=False)
+        nonempty_seqs = torch.nonzero(lengths).squeeze(-1)
+
+        shuffled_inp, nonempty_lengths = [], []
+        for h, l in zip(hidden_states, lengths):
+            if l == 0:
+                continue
+            shuffled_inp.append(h.index_select(0, torch.randperm(l, device=hidden_states.device)))
+            nonempty_lengths.append(l)
+        shuffled_inp = nn.utils.rnn.pad_sequence(shuffled_inp, batch_first=True)
+        shuffled_inp = self.dropout(shuffled_inp)
+
+        padded_inp = nn.utils.rnn.pack_padded_sequence(shuffled_inp, nonempty_lengths, batch_first=True, enforce_sorted=False)
+
         _, dec_init_states = self.rnn_encoder(padded_inp)
 
-        inp_vector = torch.zeros((batch_size, self.speaker_limit, hidden_dim), device=hidden_states.device, dtype=torch.float)
-        output, _ = self.attractor(inp_vector, dec_init_states) # B , max_spk + 1, D
+        inp_vector = torch.zeros((shuffled_inp.shape[0], self.speaker_limit, hidden_dim), device=hidden_states.device, dtype=torch.float)
+        nonempty_output, _ = self.attractor(inp_vector, dec_init_states) # B , max_spk + 1, D
+
+        output = torch.zeros((batch_size, nonempty_output.shape[1], nonempty_output.shape[2]), device=nonempty_output.device)
+        output = output.index_put((nonempty_seqs,), nonempty_output)
 
         active_prob = self.discriminator(output).squeeze(-1) # B , max_spk + 1
+        active_prob = active_prob.masked_fill((lengths == 0).unsqueeze(-1), 0.)
 
         spk_hidden = self.project(output[: , :-1 , : ]) # (B , max_spk , D)
         return spk_hidden, active_prob

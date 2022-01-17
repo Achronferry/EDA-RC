@@ -11,9 +11,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from model_utils.loss import batch_pit_loss
+from models.package.spk_extractor import eda_spk_extractor
+from models.package.rnn_cluster import RNN_Clustering
 
-class EEND(nn.Module):
-    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False, num_predict=False):
+class EDA_RC(nn.Module):
+    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False):
         """ Self-attention-based diarization model.
 
         Args:
@@ -24,7 +26,7 @@ class EEND(nn.Module):
           n_layers (int): Number of transformer-encoder layers
           dropout (float): dropout ratio
         """
-        super(EEND, self).__init__()
+        super(EDA_RC, self).__init__()
         self.n_speakers = n_speakers
         self.in_size = in_size
         self.n_heads = n_heads
@@ -32,10 +34,6 @@ class EEND(nn.Module):
         self.n_layers = n_layers
         self.has_pos = has_pos
 
-        if num_predict:
-            self.num_predictor = nn.Linear(n_units, n_speakers + 1)
-        else:
-            self.num_predictor = None
 
         self.src_mask = None
         self.encoder = nn.Linear(in_size, n_units)
@@ -44,7 +42,9 @@ class EEND(nn.Module):
             self.pos_encoder = PositionalEncoding(n_units, dropout)
         encoder_layers = TransformerEncoderLayer(n_units, n_heads, dim_feedforward, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
-        self.decoder = nn.Linear(n_units, n_speakers)
+
+        self.decoder = eda_spk_extractor(n_units, n_speakers)
+        self.rnn_cluster = RNN_Clustering(n_units, n_speakers)
         ###
 #        from models.package.resegment import num_pred_seg
 #        self.segmenter = num_pred_seg(n_units)
@@ -60,11 +60,9 @@ class EEND(nn.Module):
         initrange = 0.1
         self.encoder.bias.data.zero_()
         self.encoder.weight.data.uniform_(-initrange, initrange)
-        self.decoder.bias.data.zero_()
-        self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, seq_lens, label=None,  change_points=None, has_mask=False,
-                th=0.5, beam_size=1):
+                th=0.5, beam_size=1, chunk_size=500):
         if has_mask:
             device = src.device
             if self.src_mask is None or self.src_mask.size(0) != src.size(1):
@@ -85,43 +83,86 @@ class EEND(nn.Module):
         if self.has_pos:
             # src: (T, B, E)
             src = self.pos_encoder(src)
-        # output: (T, B, E)
-        if label is None:
-            src_chunked = torch.split(src, 2000, dim=0)
-            mask_chunked = torch.split(src_padding_mask, 2000, dim=1)
-            enc_output = [self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m) 
-                            for s, m in zip(src_chunked, mask_chunked)]
-            enc_output = torch.cat(enc_output, dim=0)
-        else:
-            enc_output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_padding_mask)
-        # output: (B, T, E)
-        enc_output = enc_output.transpose(0, 1)
-        # output: (B, T, C)
-        if self.num_predictor is not None:
-            num_probs = self.num_predictor(enc_output)
-        else:
-            num_probs = None
 
-        output = self.decoder(enc_output)
-        output = torch.sigmoid(output)
+        src_chunked = torch.split(src, chunk_size, dim=0)
+        mask_chunked = torch.split(src_padding_mask, chunk_size, dim=1)
+        # output: (B, T, E)
+        enc_chunked = [self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m).transpose(0, 1)
+                        for s, m in zip(src_chunked, mask_chunked)]
+        seq_len_chunked = [(~m).sum(dim=-1) for m in mask_chunked]
+
+
+        att_chunked, act_prob_chunked = zip(*[self.decoder(enc_c, seqlen_c) 
+                                            for enc_c, seqlen_c in zip(enc_chunked, seq_len_chunked)]) 
+        output_chunked = [torch.sigmoid(torch.bmm(e, a.transpose(-1, -2))) 
+                            for e,a in zip(enc_chunked, att_chunked)]
+
+
+
         if label is not None:
             all_losses = []
-            ###
-#            reseg_loss = self.segmenter(enc_output, seq_lens, label=label)
-#            all_losses.append(reseg_loss)
-            ###
-            truth = [l[:ilen] for l,ilen in zip(label, seq_lens)]
-            pred = [o[:ilen] for o,ilen in zip(output, seq_lens)]
-            pit_loss, _ = batch_pit_loss(pred, truth)
+
+            active_prob = torch.stack(act_prob_chunked, dim=1)
+            spks_num = label.long().sum(dim=-1, keepdim=False).max(dim=-1, keepdim=False).values # (B, )
+            act_label = torch.zeros_like(active_prob)
+            for l in range(act_label.shape[0]):
+                act_label[l, :spks_num[l]] = 1
+            prob_loss = torch.stack([F.binary_cross_entropy(p, l) 
+                        for p,l in zip(active_prob, act_label)])
+            all_losses.append(prob_loss)
+
+            label_chunked = torch.split(label, chunk_size, dim=1)
+            pit_loss = torch.zeros_like(prob_loss)
+            for sub_output, sub_label, sub_len in zip(output_chunked, label_chunked, seq_len_chunked):
+                sub_spks_num = sub_label.long().sum(dim=-1, keepdim=False).max(dim=-1, keepdim=False).values
+                valid_output = nn.utils.rnn.pad_sequence(
+                                [o[:, :n].transpose(-1,-2) for o,n in zip(sub_output, sub_spks_num)]
+                                , batch_first=True).transpose(-2,-1)
+                valid_output = F.pad(valid_output, pad=(0, sub_label.shape[-1]-valid_output.shape[-1]))
+                truth = [l[:ilen] for l,ilen in zip(sub_label, sub_len)]
+                pred = [o[:ilen] for o,ilen in zip(valid_output, sub_len)]
+                pit_loss += batch_pit_loss(pred, truth)[0]
             all_losses.append(pit_loss)
+
+
+            spk_emb = torch.stack(att_chunked, dim=1) # N, #chunk, max_spk, D
+            zip_label = torch.stack([(l.sum(dim=1) != 0) for l in label_chunked])
+            cluster_loss = self.rnn_cluster(spk_emb, zip_label)
+            all_losses.append(cluster_loss)
             return all_losses
         else:
-            stat_outputs = {}
-            ###
-#            change_points_, num_pred_ = self.segmenter(enc_output, seq_lens, th=th)
-#            stat_outputs["change_points"] = change_points_ # B, T
-#            stat_outputs["num_pred"] = num_pred_
-            ###
+            output, stat_outputs = [], {}
+
+            spk_emb = torch.stack(att_chunked, dim=1) # N, #chunk, max_spk, D
+            ext_prob = torch.stack(act_prob_chunked, dim=1)
+            output_shuffled = list(zip(output_chunked)) # N,#chunk, (len(chunk),max_spk)
+            print(output_shuffled)
+
+
+
+            # for i in output_chunked, att_chunked, act_prob_chunked, seq_len_chunked:
+            #     # Inference
+
+            # split by batch
+            for e, p, o in zip(spk_emb, ext_prob, output_shuffled): 
+                n = [np.where(p_ < th)[0] for p_ in p.cpu().detach().numpy()]
+                # print(n)
+                n = [i[0] if i.size else None for i in n]
+                e = [e_[: n_] for e_, n_ in zip(e,n)]
+                best_beam = self.rnn_cluster.decode_beam_search(e, beam_size)[0]
+                each_output = []
+                # split by chunk
+                for each_chunk, each_order in zip(o, best_beam.pred_id):
+                    ordered_chunk = torch.zeros_like(each_chunk)
+                    ordered_chunk[:,each_order]=each_chunk[:, :len(each_order)]
+                    each_output.append(ordered_chunk)
+                each_output = torch.cat(each_output, dim=0)
+                output.append(each_output)
+                 
+            output = torch.stack(output, dim=0)
+            print(output.shape)
+            input()
+
             return (output > th), stat_outputs
 
 
@@ -183,10 +224,3 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 
-if __name__ == "__main__":
-    import torch
-    model = TransformerLinearModel(5, 40, 4, 512, 2, 0.1)
-    input = torch.randn(8, 500, 40)
-    print("Model output:", model(input).size())
-    print("Model attention:", model.get_attention_weight(input).size())
-    print("Model attention sum:", model.get_attention_weight(input)[0][0][0].sum())

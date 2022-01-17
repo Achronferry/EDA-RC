@@ -1,0 +1,5 @@
+# inference options
+model_type: SC_EEND
+chunk_size: 2000000
+gpu: 1
+

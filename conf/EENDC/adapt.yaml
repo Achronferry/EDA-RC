@@ -1,11 +1,12 @@
 # adapt options
 model_type: EENDC
 gradclip: 5
-batchsize: 16
-max_epochs: 50
+batchsize: 32
+max_epochs: 100
 num_frames: 500
 optimizer: adam
 lr: 1e-4
+loss_factor: "0.5_0.5_1"
 gradient_accumulation_steps: 1
 seed: 777
 gpu: 4

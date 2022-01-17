@@ -5,20 +5,44 @@
 import os
 import numpy as np
 from tqdm import tqdm
-import logging
+import logging, time
 
 import yamlargparse
 import yaml
 import torch
 from torch import optim
 from torch import nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from models.utils import constract_models
 from model_utils.gpu import set_torch_device
 from model_utils.scheduler import NoamScheduler
 from model_utils.diarization_dataset import KaldiDiarizationDataset, my_collate
-from model_utils.loss import *
+import model_utils.loss as loss_func
+
+
+def process_stat_output(stat_dict, label):
+    proc_state_dict = {}
+    proc_state_dict['frames'] = sum([len(i) for i in label])
+    if "change_points" in stat_dict:
+        for pred, truth in zip(stat_dict["change_points"], label):
+            cp_truth = (torch.abs(truth[1:] - truth[:-1]).sum(axis=-1) != 0)
+            cp_pred = pred[1: len(truth)].bool()
+            proc_state_dict["change_TP"] = proc_state_dict.get("change_TP", 0.) + float(((cp_pred == 1) & (cp_truth == 1)).sum())
+            proc_state_dict["change_FP"] = proc_state_dict.get("change_FP", 0.) + float(((cp_pred == 1) & (cp_truth == 0)).sum())
+            proc_state_dict["change_TN"] = proc_state_dict.get("change_TN", 0.) + float(((cp_pred == 0) & (cp_truth == 0)).sum())
+            proc_state_dict["change_FN"] = proc_state_dict.get("change_FN", 0.) + float(((cp_pred == 0) & (cp_truth == 1)).sum())
+    if "num_pred" in stat_dict:
+        for pred, truth in zip(stat_dict["num_pred"], label):
+            np_truth = truth.sum(dim=-1)
+            pred = pred[:len(np_truth)]
+            proc_state_dict["num_pred_acc"] = proc_state_dict.get("num_pred_acc", 0.) + float((np_truth == pred).sum())
+
+
+    proc_state_avg = {k: v/len(label) for k,v in proc_state_dict.items()}
+    return proc_state_avg
+  
 
 
 
@@ -82,39 +106,6 @@ def train(args):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = nn.DataParallel(model, list(range(args.gpu)))
 
-    # device = set_torch_device(args.gpu)
-    model = model.to(device)
-    logger.info('Prepared model')
-    logger.info(model)
-
-    # Setup optimizer
-    if args.optimizer == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    elif args.optimizer == 'sgd':
-        optimizer = optim.SGD(model.parameters(), lr=args.lr)
-    elif args.optimizer == 'noam':
-        # for noam, lr refers to base_lr (i.e. scale), suggest lr=1.0
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98), eps=1e-9)
-    else:
-        raise ValueError(args.optimizer)
-
-    # For noam, we use noam scheduler
-    if args.optimizer == 'noam':
-        scheduler = NoamScheduler(optimizer,
-                                  args.hidden_size,
-                                  warmup_steps=args.noam_warmup_steps)
-
-    # Init/Resume
-    if args.initmodel:
-        logger.info(f"Load model from {args.initmodel}")
-        model.load_state_dict(torch.load(args.initmodel))
-    elif args.resume != 0:
-        last_epoch_model = os.path.join(args.model_save_dir, f"transformer{args.resume}.th")
-        model.load_state_dict(torch.load(last_epoch_model))
-        optimizer.load_state_dict(torch.load(os.path.join(args.model_save_dir, "last.optim")))
-        if args.optimizer == 'noam':
-            scheduler.load_state_dict(torch.load(os.path.join(args.model_save_dir, "last.sche")))
-        logger.info(f"Load model from {last_epoch_model}")
 
     assert args.batchsize % args.gradient_accumulation_steps == 0
     train_iter = DataLoader(
@@ -133,6 +124,45 @@ def train(args):
             collate_fn=my_collate
             )
 
+    # device = set_torch_device(args.gpu)
+    model = model.to(device)
+    logger.info('Prepared model')
+    logger.info(model)
+
+    # Setup optimizer
+    if args.optimizer == 'adam':
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'sgd':
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'noam':
+        # for noam, lr refers to base_lr (i.e. scale), suggest lr=1.0
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.98), eps=1e-9)
+    elif args.optimizer == 'adadelta':
+        optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
+    else:
+        raise ValueError(args.optimizer)
+
+
+    # For noam, we use noam scheduler
+    if args.optimizer == 'noam':
+        scheduler = NoamScheduler(optimizer,
+                                  args.hidden_size,
+                                  warmup_steps=args.noam_warmup_steps,
+                                  max_steps = (len(train_iter) // args.gradient_accumulation_steps) * args.max_epochs)
+
+    # Init/Resume
+    if args.initmodel:
+        logger.info(f"Load model from {args.initmodel}")
+        model.load_state_dict(torch.load(args.initmodel))
+    elif args.resume != 0:
+        last_epoch_model = os.path.join(args.model_save_dir, f"transformer{args.resume}.th")
+        model.load_state_dict(torch.load(last_epoch_model))
+        optimizer.load_state_dict(torch.load(os.path.join(args.model_save_dir, "last.optim")))
+        if args.optimizer == 'noam':
+            scheduler.load_state_dict(torch.load(os.path.join(args.model_save_dir, "last.sche")))
+        logger.info(f"Load model from {last_epoch_model}")
+
+
     # Training
     # y: feats, t: label
     # grad accumulation is according to: https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/20
@@ -140,71 +170,70 @@ def train(args):
         model.train()
         # zero grad here to accumualte gradient
         optimizer.zero_grad()
-        loss_epoch, loss_nspk = 0, 0
+        loss_epoch = [0, 0, 0]
         num_total = 0
         for step, (y, t) in tqdm(enumerate(train_iter), ncols=100, total=len(train_iter)):
             ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
             y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
             t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
-            output, aux_output = model(y, seq_lens=ilens, label=t)
-            output = [out[:ilen] for out, ilen in zip(output, ilens)]
-            truth = [ti[:ilen] for ti, ilen in zip(t, ilens)]
-            loss, label = batch_pit_loss(output, truth)
-            loss_epoch += loss.item()
+            all_losses = model(y, seq_lens=ilens, label=t)
+            # print(all_losses)
+            losses = [i.mean() for i in all_losses]
+            loss_epoch = [loss_epoch[i] + losses[i].item() for i in range(len(losses))]
+            if args.loss_factor is not None: 
+                losses = [l*f for l, f in zip(losses, args.loss_factor)]
+            loss = sum(losses)
             # clear graph here
-            if 'np' in args.model_type.lower():
-                aux_output = [out[:ilen] for out, ilen in zip(aux_output, ilens)]
-                spk_num_loss = batch_spknum_loss(aux_output, truth)
-                loss_nspk += spk_num_loss.item()
-                loss += spk_num_loss
             loss.backward()
 
             if (step + 1) % args.gradient_accumulation_steps == 0:
+                if args.gradclip > 0:
+                    nn.utils.clip_grad_value_(model.parameters(), args.gradclip)
                 optimizer.step()
                 optimizer.zero_grad()
                 # noam should be updated on step-level
                 if args.optimizer == 'noam':
                     scheduler.step()
-                if args.gradclip > 0:
-                    nn.utils.clip_grad_value_(model.parameters(), args.gradclip)
             num_total += 1
-        loss_epoch /= num_total
-        loss_nspk /= num_total
+        loss_epoch = [i / num_total for i in loss_epoch]
 
         model.eval()
         with torch.no_grad():
             stats_avg = {}
             cnt = 0
-            for y, t in dev_iter:
+            for y, t in tqdm(dev_iter, ncols=100, total=len(dev_iter)):
                 ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
                 y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
                 t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
-                output, aux_output = model(y, seq_lens=ilens)
-                output = [out[:ilen] for out, ilen in zip(output, ilens)]
+                cp = F.pad((torch.abs(t[:, 1:] - t[:, :-1]).sum(dim=-1) != 0), pad=(1, 0))
+                output, stat_dict = model(y, seq_lens=ilens, change_points=None)
+                output = [out[:ilen] for out, ilen in zip(output.float(), ilens)]
                 truth = [ti[:ilen] for ti, ilen in zip(t, ilens)]
 
-                _, label = batch_pit_loss(output, truth)
-                stats = report_diarization_error(output, label)
+                _, label = loss_func.batch_pit_loss(output, truth)
+                stats = loss_func.report_diarization_error(output, label)
+                # stats = {}
+                stats.update(process_stat_output(stat_dict, truth))
                 for k, v in stats.items():
                     stats_avg[k] = stats_avg.get(k, 0) + v
-
-                if 'np' in args.model_type.lower():
-                    aux_output = [out[:ilen] for out, ilen in zip(aux_output, ilens)]
-                    stats_avg['num_acc'] = stats_avg.get('num_acc', 0) + report_spknum_acc(aux_output, truth, label_delay=0)
                 cnt += 1
             stats_avg = {k:v/cnt for k,v in stats_avg.items()}
-            stats_avg['DER'] = stats_avg['diarization_error'] / stats_avg['speaker_scored'] * 100
+            stats_avg['DER'] = stats_avg.get('diarization_error', 0) / stats_avg.get('speaker_scored', 1e-6) * 100
+            stats_avg['change_recall'] = stats_avg.get("change_TP", 0) / (stats_avg.get("change_TP", 0) + stats_avg.get("change_FN", 0) + 1e-6) * 100
+            stats_avg['change_precision'] = stats_avg.get("change_TP", 0) / (stats_avg.get("change_TP", 0) + stats_avg.get("change_FP", 0) + 1e-6) * 100
+            stats_avg['num_pred_acc'] = stats_avg.get("num_pred_acc", 0) / stats_avg.get("frames", 1e-6) * 100
             for k in stats_avg.keys():
                 stats_avg[k] = round(stats_avg[k], 2)
 
-        model_filename = os.path.join(args.model_save_dir, f"transformer{epoch}.th")
-        torch.save(model.state_dict(), model_filename)
-        torch.save(optimizer.state_dict(), os.path.join(args.model_save_dir, "last.optim"))
         if args.optimizer == 'noam':
             torch.save(scheduler.state_dict(), os.path.join(args.model_save_dir, "last.sche"))
 
+        loss_info = '/'.join([f"{i:.5f}" for i in loss_epoch])
         logger.info(f"Epoch: {epoch:3d}, LR: {optimizer.param_groups[0]['lr']:.7f},\
-            Training Loss: {loss_epoch:.5f}, Training n_speaker Loss: {loss_nspk:.5f}, Dev Stats: {stats_avg}")
+            Training Loss: {loss_info}, Dev Stats: {stats_avg}")
+        model_filename = os.path.join(args.model_save_dir, f"transformer{epoch}.th")
+        torch.save(model.state_dict(), model_filename)
+        torch.save(optimizer.state_dict(), os.path.join(args.model_save_dir, "last.optim"))
 
     logger.info('Finished!')
 
@@ -253,18 +282,22 @@ if __name__=='__main__':
     parser.add_argument('--hidden-size', default=256, type=int,
                         help='number of lstm output nodes')
     parser.add_argument('--in-size', default=None, type=int)
-    parser.add_argument('--max-relative-position', default=2, type=int,
-                        help='number of relative positions, only for RP')
-    parser.add_argument('--gap', default=100, type=int,
-                        help='gap of different relations, only for RP')
+    # parser.add_argument('--max-relative-position', default=2, type=int,
+    #                     help='number of relative positions, only for RP')
+    # parser.add_argument('--gap', default=100, type=int,
+    #                     help='gap of different relations, only for RP')
     parser.add_argument('--rnn-cell', default='LSTM', type=str,
                         help='cell type, only for LSTM')
+    parser.add_argument('--inherit-from', default=None, type=str,
+                        help='train from EEND (FOR EDA)')
+    parser.add_argument('--loss_factor', default=None, type=str,
+                            help='coefficients of each loss, eg: 0.5_0.5_1')
     parser.add_argument('--context-size', default=0, type=int)
     parser.add_argument('--subsampling', default=1, type=int)
     parser.add_argument('--frame-size', default=1024, type=int)
     parser.add_argument('--frame-shift', default=256, type=int)
     parser.add_argument('--sampling-rate', default=16000, type=int)
-    parser.add_argument('--noam-warmup-steps', default=0.01, type=float)
+    parser.add_argument('--noam-warmup-steps', default=100000, type=float)
     parser.add_argument('--transformer-encoder-n-heads', default=4, type=int)
     parser.add_argument('--transformer-encoder-n-layers', default=2, type=int)
     parser.add_argument('--transformer-encoder-dropout', default=0.1, type=float)
@@ -275,4 +308,6 @@ if __name__=='__main__':
     if not os.path.exists(args.model_save_dir):
         os.makedirs(args.model_save_dir)
 
+    if args.loss_factor is not None:
+        args.loss_factor = [float(i) for i in args.loss_factor.split('_')]
     train(args)

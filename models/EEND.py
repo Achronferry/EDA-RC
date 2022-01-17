@@ -64,7 +64,7 @@ class EEND(nn.Module):
         self.decoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, seq_lens, label=None,  change_points=None, has_mask=False,
-                th=0.5, beam_size=1):
+                th=0.5, beam_size=1, chunk_size=2000):
         if has_mask:
             device = src.device
             if self.src_mask is None or self.src_mask.size(0) != src.size(1):
@@ -87,13 +87,14 @@ class EEND(nn.Module):
             src = self.pos_encoder(src)
         # output: (T, B, E)
         if label is None:
-            src_chunked = torch.split(src, 2000, dim=0)
-            mask_chunked = torch.split(src_padding_mask, 2000, dim=1)
+            src_chunked = torch.split(src, chunk_size, dim=0)
+            mask_chunked = torch.split(src_padding_mask, chunk_size, dim=1)
             enc_output = [self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m) 
                             for s, m in zip(src_chunked, mask_chunked)]
             enc_output = torch.cat(enc_output, dim=0)
         else:
             enc_output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_padding_mask)
+            
         # output: (B, T, E)
         enc_output = enc_output.transpose(0, 1)
         # output: (B, T, C)
