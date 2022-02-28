@@ -17,7 +17,7 @@ B: mini-batch size
 """
 
 
-def pit_loss(pred, label, label_delay=0):
+def pit_loss(pred, label, label_delay=0, output_order=False):
     """
     Permutation-invariant training (PIT) cross entropy loss function.
 
@@ -34,8 +34,9 @@ def pit_loss(pred, label, label_delay=0):
       label_perms[min_index]: permutated labels
     """
     # label permutations along the speaker axis
-    label_perms = [label[..., list(p)] for p
+    perms = [(list(p), label[..., list(p)]) for p
                     in permutations(range(label.shape[-1]))]
+    perm_order, label_perms = zip(*perms)
     losses = torch.stack(
         [F.binary_cross_entropy(
             pred[label_delay:, ...],
@@ -43,10 +44,15 @@ def pit_loss(pred, label, label_delay=0):
     min_loss = losses.min() * (len(label) - label_delay)
     min_index = losses.argmin().detach()
     
-    return min_loss, label_perms[min_index]
+    min_loss = torch.zeros_like(min_loss) if pred.shape[0] == 0 else min_loss
+    
+    if output_order:
+      return min_loss, label_perms[min_index], perm_order[min_index]
+    else:
+      return min_loss, label_perms[min_index]
 
 
-def batch_pit_loss(ys, ts, label_delay=0):
+def batch_pit_loss(ys, ts, label_delay=0, output_order=False):
     """
     PIT loss over mini-batch.
 
@@ -58,13 +64,20 @@ def batch_pit_loss(ys, ts, label_delay=0):
       loss: (1,)-shape mean cross entropy over mini-batch
       labels: B-length list of permuted labels
     """
-    loss_w_labels = [pit_loss(y, t, label_delay)
+    loss_w_labels = [pit_loss(y, t, label_delay, output_order)
                      for (y, t) in zip(ys, ts)]
-    losses, labels = zip(*loss_w_labels)
-    loss = torch.stack(losses).sum()
-    n_frames = np.sum([t.shape[0] for t in ts])
-    loss = loss / n_frames
-    return loss, labels
+    if output_order:
+      losses, labels, orders = zip(*loss_w_labels)
+      loss = torch.stack(losses).sum()
+      n_frames = np.sum([t.shape[0] for t in ts])
+      loss = loss / (n_frames + 1e-8)
+      return loss, labels, orders
+    else:
+      losses, labels = zip(*loss_w_labels)
+      loss = torch.stack(losses).sum()
+      n_frames = np.sum([t.shape[0] for t in ts])
+      loss = loss / (n_frames + 1e-8)
+      return loss, labels
 
 
 def calc_diarization_error(pred, label, label_delay=0):

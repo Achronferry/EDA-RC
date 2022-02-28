@@ -43,6 +43,7 @@ class eda_spk_extractor(nn.Module):
         assert max_speaker_num > 0
         self.speaker_limit = max_speaker_num + 1
 
+        self.dec_hidden_size = hidden_size
         self.rnn_encoder = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
         self.attractor = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
         self.discriminator = nn.Sequential(nn.Linear(hidden_size, 1),
@@ -66,6 +67,11 @@ class eda_spk_extractor(nn.Module):
                 continue
             shuffled_inp.append(h.index_select(0, torch.randperm(l, device=hidden_states.device)))
             nonempty_lengths.append(l)
+
+        output = torch.zeros((batch_size, self.speaker_limit, self.dec_hidden_size), device=hidden_states.device)
+        if nonempty_lengths == []:
+            return output[: , :-1 , : ], torch.zeros((batch_size, self.speaker_limit), device=hidden_states.device)
+
         shuffled_inp = nn.utils.rnn.pad_sequence(shuffled_inp, batch_first=True)
         shuffled_inp = self.dropout(shuffled_inp)
 
@@ -76,10 +82,9 @@ class eda_spk_extractor(nn.Module):
         inp_vector = torch.zeros((shuffled_inp.shape[0], self.speaker_limit, hidden_dim), device=hidden_states.device, dtype=torch.float)
         nonempty_output, _ = self.attractor(inp_vector, dec_init_states) # B , max_spk + 1, D
 
-        output = torch.zeros((batch_size, nonempty_output.shape[1], nonempty_output.shape[2]), device=nonempty_output.device)
         output = output.index_put((nonempty_seqs,), nonempty_output)
 
-        active_prob = self.discriminator(output).squeeze(-1) # B , max_spk + 1
+        active_prob = self.discriminator(output.detach()).squeeze(-1) # B , max_spk + 1
         active_prob = active_prob.masked_fill((lengths == 0).unsqueeze(-1), 0.)
 
         spk_hidden = self.project(output[: , :-1 , : ]) # (B , max_spk , D)

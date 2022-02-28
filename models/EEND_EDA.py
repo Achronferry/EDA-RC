@@ -100,13 +100,13 @@ class EEND_EDA(nn.Module):
             output = torch.sigmoid(torch.bmm(enc_output, attractors.transpose(-1, -2))) # (B, T, C)
             
             all_losses = []
-            spks_num = label.long().sum(dim=-1, keepdim=False).max(dim=-1, keepdim=False).values # (B, )
+            spks_num = (label.sum(dim=1, keepdim=False) > 0).sum(dim=-1, keepdim=False) # (B, )
             act_label = torch.zeros_like(active_prob)
             for l in range(act_label.shape[0]):
                 act_label[l, :spks_num[l]] = 1
 
             prob_loss = torch.stack([F.binary_cross_entropy(p, l) 
-                        for p,l in zip(active_prob, act_label)])
+                        for p,l in zip(active_prob, act_label)]).mean(dim=0)
 
             all_losses.append(prob_loss)
 
@@ -118,6 +118,7 @@ class EEND_EDA(nn.Module):
             pred = [o[:ilen] for o,ilen in zip(valid_output, seq_lens)]
             pit_loss, _ = batch_pit_loss(pred, truth)
             all_losses.append(pit_loss)
+
             return all_losses
         else:
             enc_chunked = torch.split(enc_output, chunk_size, dim=1)

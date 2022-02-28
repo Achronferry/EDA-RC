@@ -66,8 +66,15 @@
 
 # from transformers.models import wav2vec2
 
+from statistics import mode
 import torch
-
-
-x  = torch.ones((4,5))
-print(x[2:7])
+import torch.nn.functional as F
+x = torch.tensor([[1,1,1],[2,2,2], [3,3,3]]).unsqueeze(0).float()
+y = F.pad(x, (0,0,0,1), mode='replicate')
+print(y)
+# print(~torch.logical_xor(x1, x2))
+# decoder_layer = nn.TransformerDecoderLayer(d_model=512, nhead=8, batch_first=True)
+# memory = torch.rand(32, 10, 512)
+# tgt = torch.rand(32, 20, 512)
+# out = decoder_layer(tgt, memory)
+# print(out.shape)

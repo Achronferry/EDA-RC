@@ -6,7 +6,7 @@ export PYTHONPATH=`pwd`:$PYTHONPATH
 
 dataset=LibriSpeech
 num_speaker=3
-model_name=EEND_EDA
+model=EEND_EDA
 stage=0
 # max_epoch=50
 exp_dir=
@@ -16,7 +16,7 @@ suffix=
 
 . utils/parse_options.sh || exit 1;
 
-conf_dir=conf/$model_name
+conf_dir=conf/$model
 feature_conf=$conf_dir/feature.yaml
 train_conf=$conf_dir/train.yaml
 infer_conf=$conf_dir/infer.yaml
@@ -26,7 +26,7 @@ if [ "$exp_dir" = "" ];then
     conf_mark=`awk '/^batchsize|^lr|^num_frames|^gradclip|^noam_warmup_steps/ {sub(/: /,"_"); print $1} /^optimizer/ {print $2}' $train_conf |
                 paste -s -d '_'`
     # date_suf=`date +%Y%m%d%H%M%S`
-    exp_dir=exp/${dataset}_${num_speaker}/$model_name/${conf_mark}${suffix}
+    exp_dir=exp/${dataset}_${num_speaker}/$model/${conf_mark}${suffix}
 fi
 max_epoch=`awk '/max_epochs/ {print $2}' $train_conf`
 cpd_mode=`awk '/change_mode/ {print $2}' $infer_conf`
@@ -37,8 +37,8 @@ if [ $dataset = "mini_LibriSpeech" ]; then
     train_dir=data/$dataset/data/train_clean_5_ns${num_speaker}_beta2_2000
     dev_dir=data/$dataset/data/dev_clean_2_ns${num_speaker}_beta2_500
 elif [ $dataset = "LibriSpeech" ]; then
-    train_dir=data/$dataset/data/train_clean_360_ns${num_speaker}_beta2_100000
-    dev_dir=data/$dataset/data/dev_clean_ns${num_speaker}_beta2_500
+    train_dir=data/$dataset/data/train_clean_360_ns${num_speaker}_beta8_100000
+    dev_dir=data/$dataset/data/dev_clean_ns${num_speaker}_beta8_500
 elif [ $dataset = "callhome" ]; then
     train_dir=data/$dataset/eval/callhome1_spk${num_speaker}
     dev_dir=data/$dataset/eval/callhome2_spk${num_speaker}
@@ -78,7 +78,7 @@ if [ $stage -le 1 ]; then
       done
     fi
     echo "Start training from epoch {$checkpoint}"
-    python run/train_v2.py -c $train_conf -f $feature_conf $train_dir $dev_dir $model_dir --max-epochs $max_epoch --num-speakers $num_speaker --resume $checkpoint 
+    python run/train.py -c $train_conf -f $feature_conf $train_dir $dev_dir $model_dir --max-epochs $max_epoch --num-speakers $num_speaker --resume $checkpoint 
     cp $feature_conf $model_dir
 fi
 
@@ -106,7 +106,7 @@ fi
 # Inferring
 if [ $stage -le 3 ]; then
     echo "Start inferring"
-    python run/infer_v2.py -c $infer_conf -c2 $model_dir/param.yaml -f $feature_conf $dev_dir $avg_model $infer_out_dir --num-speakers $num_speaker
+    python run/infer.py -c $infer_conf -c2 $model_dir/param.yaml -f $feature_conf $dev_dir $avg_model $infer_out_dir --num-speakers $num_speaker
 fi
 
 # Scoring

@@ -172,30 +172,30 @@ def train(args):
         optimizer.zero_grad()
         loss_epoch = [0, 0, 0]
         num_total = 0
-        for step, (y, t) in tqdm(enumerate(train_iter), ncols=100, total=len(train_iter)):
-            ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
-            y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
-            t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
-            all_losses = model(y, seq_lens=ilens, label=t)
-            # print(all_losses)
-            losses = [i.mean() for i in all_losses]
-            loss_epoch = [loss_epoch[i] + losses[i].item() for i in range(len(losses))]
-            if args.loss_factor is not None: 
-                losses = [l*f for l, f in zip(losses, args.loss_factor)]
-            loss = sum(losses)
-            # clear graph here
-            loss.backward()
+        # for step, (y, t) in tqdm(enumerate(train_iter), ncols=100, total=len(train_iter)):
+        #     ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
+        #     y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
+        #     t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
+        #     all_losses = model(y, seq_lens=ilens, label=t)
+        #     # print(all_losses)
+        #     losses = [i.mean() for i in all_losses]
+        #     loss_epoch = [loss_epoch[i] + losses[i].item() for i in range(len(losses))]
+        #     if args.loss_factor is not None: 
+        #         losses = [l*f for l, f in zip(losses, args.loss_factor)]
+        #     loss = sum(losses)
+        #     # clear graph here
+        #     loss.backward()
 
-            if (step + 1) % args.gradient_accumulation_steps == 0:
-                if args.gradclip > 0:
-                    nn.utils.clip_grad_value_(model.parameters(), args.gradclip)
-                optimizer.step()
-                optimizer.zero_grad()
-                # noam should be updated on step-level
-                if args.optimizer == 'noam':
-                    scheduler.step()
-            num_total += 1
-        loss_epoch = [i / num_total for i in loss_epoch]
+        #     if (step + 1) % args.gradient_accumulation_steps == 0:
+        #         if args.gradclip > 0:
+        #             nn.utils.clip_grad_value_(model.parameters(), args.gradclip)
+        #         optimizer.step()
+        #         optimizer.zero_grad()
+        #         # noam should be updated on step-level
+        #         if args.optimizer == 'noam':
+        #             scheduler.step()
+        #     num_total += 1
+        # loss_epoch = [i / num_total for i in loss_epoch]
 
         model.eval()
         with torch.no_grad():

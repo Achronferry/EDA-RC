@@ -8,6 +8,7 @@ from models.package.focal_loss import focal_loss
 
 
 
+
 class frameRNN_dec(nn.Module): # offline 
     def __init__(self, n_units, n_speakers, rnn_cell='GRU', dropout=0.2):
         super(frameRNN_dec, self).__init__()
@@ -66,8 +67,12 @@ class frameRNN_dec(nn.Module): # offline
         batch_spk_loss, frame_active_loss = [torch.zeros((), device=device, requires_grad=True) for _ in range(batch_size)], \
                                             [torch.zeros((), device=device, requires_grad=True) for _ in range(batch_size)]
         for i in range(batch_size):
+            vad_label = (spk_in_frame[i, :seq_len[i]] > 0).float()
+
+            vad_weight = vad_label.masked_fill(vad_label == 1, vad_label.shape[0] / (vad_label.sum(dim=0) + 1e-9)).masked_fill(vad_label == 0, vad_label.shape[0] / (vad_label.shape[0] - vad_label.sum(dim=0) + 1e-9))
             frame_active_loss[i] = frame_active_loss[i] + F.binary_cross_entropy(
-                                       self.vad(frame_emb[i,:seq_len[i]]) , (spk_in_frame[i, :seq_len[i]] > 0).float(), reduction='sum')
+                                       self.vad(frame_emb[i,:seq_len[i]]) , vad_label, 
+                                       weight=vad_weight, reduction='sum')
 
         spk_init_state = self.rnn_init_hidden.repeat(batch_size, 1).unsqueeze(0)
 
@@ -109,7 +114,9 @@ class frameRNN_dec(nn.Module): # offline
                 spk_label[frame_ids[1:] - st_frame - 1] = 1
                 # spk_label = label[batch_id, st_frame + 1 : seq_len[batch_id], spk_id]
 
-                batch_spk_loss[batch_id]  = batch_spk_loss[batch_id] + F.binary_cross_entropy(active_score, spk_label)
+                spk_weight = spk_label.masked_fill(spk_label == 1, spk_label.shape[0] / (spk_label.sum(dim=0) + 1e-9)).masked_fill(spk_label == 0, spk_label.shape[0] / (spk_label.shape[0] - spk_label.sum(dim=0) + 1e-9))
+                batch_spk_loss[batch_id]  = batch_spk_loss[batch_id] + F.binary_cross_entropy(
+                                                active_score, spk_label, weight=spk_weight)
 
                 # prev_hidden = torch.repeat_interleave(adder_out[batch_id])
 
@@ -133,9 +140,14 @@ class frameRNN_dec(nn.Module): # offline
                 updated_chosen_vad = self.vad(updated_chosen_frames[st :st+len(chosen_frame_ids[i])])
                 st += len(chosen_frame_ids[i])
                 spk_in_frame[i, chosen_frame_ids[i]] -= 1
-                updated_chosen_label = spk_in_frame[i, chosen_frame_ids[i]]
+                updated_chosen_label = (spk_in_frame[i, chosen_frame_ids[i]] > 0).float()
                 # assert torch.any(updated_chosen_label >= 0) or updated_chosen_label.shape[0] == 0,f"{updated_chosen_label}"
-                frame_active_loss[i] = frame_active_loss[i] + F.binary_cross_entropy(updated_chosen_vad, (updated_chosen_label > 0).float(), reduction='sum')
+                pos = updated_chosen_label.shape[0] / (updated_chosen_label.sum(dim=0) + 1e-9) 
+                vad_weight = updated_chosen_label.masked_fill(updated_chosen_label == 0, updated_chosen_label.shape[0] / (updated_chosen_label.sum(dim=0) + 1e-9)).masked_fill(updated_chosen_label == 0, updated_chosen_label.shape[0] / (updated_chosen_label.shape[0] - updated_chosen_label.sum(dim=0) + 1e-9))
+
+                frame_active_loss[i] = frame_active_loss[i] + F.binary_cross_entropy(
+                                        updated_chosen_vad, updated_chosen_label,
+                                        weight=vad_weight, reduction='sum')
 
 
 
@@ -187,7 +199,6 @@ class frameRNN_dec(nn.Module): # offline
                 #             self.projection_emb(frame_emb[st: st+256]).transpose(0,1))).squeeze(dim=0))
                 #     st += 256
                 # offline_prob = torch.cat(offline_prob, dim=0)
-                
                 # torch.sigmoid(torch.mm(self.projection_spk(spk_states), self.projection_emb(frame_emb).transpose(0,1))).squeeze(dim=0)
                 # spk_active_frames = torch.nonzero(offline_prob > th).squeeze(dim=-1)
 

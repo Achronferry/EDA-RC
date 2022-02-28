@@ -5,16 +5,15 @@
 import numpy as np
 import math
 import os,sys
-
-from torch._C import device
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from model_utils.loss import batch_pit_loss, pit_loss
 
-class SC_EEND(nn.Module):
+from models.package.grid_decoder import frameRNN_dec
+
+class EEND_GRID(nn.Module):
     def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False):
         """ Self-attention-based diarization model.
 
@@ -26,7 +25,7 @@ class SC_EEND(nn.Module):
           n_layers (int): Number of transformer-encoder layers
           dropout (float): dropout ratio
         """
-        super(SC_EEND, self).__init__()
+        super(EEND_GRID, self).__init__()
         self.n_speakers = n_speakers
         self.in_size = in_size
         self.n_heads = n_heads
@@ -43,7 +42,7 @@ class SC_EEND(nn.Module):
             self.pos_encoder = PositionalEncoding(n_units, dropout)
         encoder_layers = TransformerEncoderLayer(n_units, n_heads, dim_feedforward, dropout)
         self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
-        self.decoder = SpeakerChain_dec(n_units, self.n_speakers, dropout=dropout)
+        self.decoder = frameRNN_dec(n_units, self.n_speakers, dropout=dropout)
         ###
 #        from models.package.resegment import num_pred_seg
 #        self.segmenter = num_pred_seg(n_units)
@@ -101,85 +100,23 @@ class SC_EEND(nn.Module):
 
 
         if label is not None:
-            pit_loss = self.decoder(enc_output, seq_lens, label)
-            return [pit_loss]
+            all_losses = self.decoder(enc_output, seq_lens, label)
+            # all_losses = [spk_loss, active_loss]
+            return all_losses
         else:
-            prob = self.decoder.dec_greedy(enc_output)
-            pred = (prob > th)
+            pred = []
+            for each, each_len in zip(enc_output, seq_lens):
+                each_pred = self.decoder.dec_each_offline(each[:each_len], th=th)
+                pred.append(each_pred)
 
-            return pred, {}
-
-
-
-
-
-class SpeakerChain_dec(nn.Module):
-    def __init__(self, n_units, n_speakers, rnn_cell='LSTM', dropout=0.2):
-        super(SpeakerChain_dec, self).__init__()
-        self.n_speakers = n_speakers
-        self.label_proj = nn.Linear(1, n_units)
-        self.chain_rnn = nn.LSTM(2*n_units, n_units, batch_first=True)
-        self.rnn_init_h = nn.Parameter(torch.zeros((1, n_units)))
-        self.pred = nn.Sequential(nn.Linear(n_units, 1), nn.Sigmoid())
-        self.dropout = nn.Dropout(dropout)
-
-    
-    def forward(self, enc_output, seq_len, label):
-        '''
-        frame_emb: (B, T, D)
-
-        '''
-
-        device = enc_output.device
-        
-        # ===stage 1===
-        pred = self.dec_greedy(enc_output)
-        _, teacher_label = batch_pit_loss(pred, label)
-        teacher_label = torch.stack(teacher_label, dim=0)
-        teacher_label = F.pad(teacher_label,(0,1))
-
-        # ===stage 2===
-        batch_size, max_len, _ = enc_output.shape
-
-        y_prev = torch.zeros((batch_size, max_len,1), device=device, dtype=torch.float)
-        h = self.rnn_init_h.repeat(batch_size * max_len, 1).unsqueeze(0)
-        c = torch.zeros_like(h)
-
-        z = []
-        for spk_turn in range(self.n_speakers + 1): # empty
-            E_spk = torch.cat([enc_output, self.label_proj(y_prev)], dim=-1)
-            E_in = E_spk.view(batch_size * max_len, 1, -1)
-            h_out, (h,c) = self.chain_rnn(self.dropout(E_in), (h,c))
-            h_out = h_out.view(batch_size, max_len, -1)
-            z_s = self.pred(h_out)
-            z.append(z_s)
-            y_prev = teacher_label[:, :, spk_turn : spk_turn + 1]
-        z = torch.cat(z, dim=-1)
-
-        
-        y_mpt = torch.cat([l[:ilen] for l,ilen in zip(teacher_label, seq_len)], dim=0)
-        z_mpt = torch.cat([o[:ilen] for o,ilen in zip(z, seq_len)], dim=0)
-        pit_loss = F.binary_cross_entropy(z_mpt, y_mpt)
-        
-        return pit_loss
+            return self._align_for_parallel(pred, self.n_speakers, max_len), {}
 
 
-
-    def dec_greedy(self, enc_output, th=0.5):
-        device = enc_output.device
-        batch_size, max_len, _ = enc_output.shape
-        y_prev = torch.zeros((batch_size, max_len,1), device=device, dtype=torch.float)
-        h = self.rnn_init_h.repeat(batch_size * max_len, 1).unsqueeze(0)
-        c = torch.zeros_like(h)
-
-        z = []
-        for spk_turn in range(self.n_speakers):
-            E_spk = torch.cat([enc_output, self.label_proj(y_prev)], dim=-1)
-            E_in = E_spk.view(batch_size * max_len, 1, -1)
-            h_out, (h,c) = self.chain_rnn(E_in, (h,c))
-            h_out = h_out.view(batch_size, max_len, -1)
-            z_s = self.pred(h_out)
-            z.append(z_s)
-            y_prev = (z_s > 0.5).float()
-        
-        return torch.cat(z, dim=-1)
+    def _align_for_parallel(self, outputs, n_spk, max_len):
+        aligned_outputs = []
+        for i in outputs:
+            aligned_i = torch.zeros((max_len, n_spk), device = i.device)
+            aligned_i[: i.shape[0], :i.shape[1]] = i
+            aligned_outputs.append(aligned_i)
+        aligned_outputs = torch.stack(aligned_outputs, dim = 0)
+        return aligned_outputs

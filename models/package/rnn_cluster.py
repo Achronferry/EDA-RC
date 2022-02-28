@@ -1,3 +1,4 @@
+from functools import reduce
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,9 +6,91 @@ import torch.nn.functional as F
 import itertools
 import copy
 
-class RNN_Clustering(nn.Module):
+class RNN_Clusterer(nn.Module):
     def __init__(self, n_units, n_speakers, rnn_cell='GRU', dropout=0.2):
-        super(RNN_Clustering, self).__init__()
+        super(RNN_Clusterer, self).__init__()
+        self.n_speakers = n_speakers
+        if rnn_cell == 'reluRNN':
+            self.mixer = nn.RNNCell(n_units, n_units, nonlinearity='relu')
+        else:
+            self.mixer = getattr(nn, f"{rnn_cell}Cell")(n_units, n_units)
+        self.rnn_init_hidden = nn.Parameter(torch.zeros(1, n_units))
+        self.pred = nn.Bilinear(n_units, n_units, 1)
+
+    def forward(self, spk_emb, spk_nums, label):
+        '''
+        spk_emb: Tensor (N, #chunk, max_spk, D) invalid embs should be all-zeros
+        spk_nums: Tensor (N, #chunk) [4,4,4,3]
+        label: (N, #chunk, max_spk) be like [[0,1,2], [2,0,1], [1,0,2]]
+        
+        The order of spk in each chunk is fixed.
+        '''
+        device = spk_emb.device
+        bsize, max_chunk_num, max_spk, _ = spk_emb.shape
+        #TODO mask invalid embeddings?
+        clusters = self.rnn_init_hidden.unsqueeze(0).expand(bsize, max_spk, -1) #(N, max_spk, D)
+
+        chunk_losses = torch.tensor(0., device=device)
+        for n_step in range(max_chunk_num):
+            n_spk = spk_nums[:,n_step] #(N,)
+            step_label = label[:, n_step, :].long() #(N, max_spk)
+            step_emb = spk_emb[ :, n_step, :, :] #(N, max_spk, D)
+            # calculate probs
+            step_log_prob = torch.log_softmax(torch.bmm(step_emb, clusters.transpose(-1,-2)), dim=-1)
+            truth = [l[:ilen] for l,ilen in zip(step_label, n_spk)]
+            pred = [o[:ilen] for o,ilen in zip(step_log_prob, n_spk)]
+            step_loss = []
+            for p,t in zip(pred, truth):
+                step_loss.append(F.nll_loss(p, t, reduction='sum') if len(p)!=0 else torch.tensor(0., device=device))
+            step_loss = torch.stack(step_loss)
+            chunk_losses += step_loss.sum()
+            # chunk_log_probs.append(chunk_log_probs)
+            # Update states
+            ordered_emb = torch.gather(step_emb, dim=1, index=step_label.unsqueeze(-1).expand_as(step_emb))
+            stack_outp = self.mixer(ordered_emb.reshape(bsize*max_spk, -1), clusters.reshape(bsize*max_spk, -1)).reshape(bsize, max_spk, -1)
+            for b in range(bsize):
+                ind2 = step_label[b, :n_spk[b]]
+                ind1 = torch.ones_like(ind2) * b
+                # clusters[b, step_label[b, :n_spk[b]],:] = stack_outp[b, step_label[b, :n_spk[b]],:]
+                clusters = clusters.index_put((ind1, ind2), stack_outp[b, ind2])
+        chunk_losses = chunk_losses / spk_nums.sum().float()
+        return chunk_losses
+
+    # TODO for a certain number of speakers
+    def decode_fix_spk(self, spk_emb, spk_num):
+        exist_clusters = self.rnn_init_hidden.expand(spk_num, -1)
+        for chunk in spk_emb:
+            sim_score = torch.mm(chunk, exist_clusters.transpose(0, 1))
+        pass
+
+    def decode_beam_search(self, spk_emb, beam_size=3):
+        '''
+        spk_emb: List of [Tensor(#chunk_spk, D), Tensor(#chunk_spk, D), Tensor(#chunk_spk, D), ...]
+        '''
+        #TODO beam search?
+        # beams = [BeamState(device=self.rnn_init_hidden.device)]
+        exist_clusters = self.rnn_init_hidden
+        for chunk in spk_emb:
+            sim_score = F.log_softmax(torch.mm(chunk, exist_clusters.transpose(0, 1)))
+            expand_sim_score = F.pad(sim_score, (0,chunk.shape[0] - 1,0,0), mode='replicate')
+
+
+
+
+            
+            pass
+
+
+            
+
+
+
+            
+            pass
+
+class RNN_Clusterer_p(nn.Module):
+    def __init__(self, n_units, n_speakers, rnn_cell='GRU', dropout=0.2):
+        super(RNN_Clusterer_p, self).__init__()
         self.n_speakers = n_speakers
         if rnn_cell == 'reluRNN':
             self.mixer = nn.RNNCell(n_units, n_units, nonlinearity='relu')
@@ -16,6 +99,10 @@ class RNN_Clustering(nn.Module):
         self.rnn_init_hidden = nn.Parameter(torch.zeros(1, n_units))
 
     def forward(self, spk_emb, label=None):
+        '''
+        spk_emb: (N, #chunk, #spk, D)
+        label: (N, #chunk, #spk) 0/1
+        '''
         device = self.rnn_init_hidden.device
         ctmpr_spks = torch.sum(label.long(), dim=-1, keepdim=False)
 
@@ -148,13 +235,13 @@ class RNN_Clustering(nn.Module):
                     if len(new_beams) >= beam_size and s < new_beams[-1].score:
                         continue
 
-                    i = p.long().argmax(dim=-1)
+                    i = p.long().argmax(dim=-1) #[[0,1,0], [0,0,1]] -> [2,3]
                     before_hiddens = prev_h[i]
                     after_hiddens = self.mixer(step_embs, before_hiddens)
                     next_h = prev_h.clone()
                     next_h[i] = after_hiddens
                     
-                    new_label = torch.sum(p, dim=0)
+                    new_label = torch.sum(p, dim=0) #[[0,1,0], [0,0,1]] -> [0,1,1]
                     avail_mask = new_label.clone().bool()
                     avail_mask[:exist_spk_num] = True
                     # print(avail_mask)
@@ -182,7 +269,7 @@ class BeamState:
         self.score = 0.
         self.pred = []
         self.T = 0
-        self.pred_id = []
+        self.pred_order = []
     
     def copy(self):
         new_beam = BeamState(self.device)
@@ -190,19 +277,19 @@ class BeamState:
         new_beam.cluster_embs = copy.deepcopy(self.cluster_embs)
         new_beam.score = self.score
         new_beam.pred = copy.copy(self.pred)
-        new_beam.pred_id = copy.copy(self.pred_id)
+        new_beam.pred_order = copy.copy(self.pred_order)
         new_beam.T = self.T   
         return new_beam     
 
 
 
-    def clone_and_apply(self, score, hidden_states, pred_label, pred_id):
+    def clone_and_apply(self, score, hidden_states, pred_label, pred_order):
         new_state = self.copy()
         new_state.T += 1
         new_state.score += score
         new_state.hidden_states = hidden_states
         new_state.pred.append(pred_label)
-        new_state.pred_id.append(pred_id)
+        new_state.pred_order.append(pred_order)
         
         return new_state
 

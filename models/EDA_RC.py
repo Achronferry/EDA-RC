@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from model_utils.loss import batch_pit_loss
 from models.package.spk_extractor import eda_spk_extractor
-from models.package.rnn_cluster import RNN_Clustering
+from models.package.rnn_cluster import RNN_Clusterer
 
 class EDA_RC(nn.Module):
     def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False):
@@ -44,7 +44,7 @@ class EDA_RC(nn.Module):
         self.transformer_encoder = TransformerEncoder(encoder_layers, n_layers)
 
         self.decoder = eda_spk_extractor(n_units, n_speakers)
-        self.rnn_cluster = RNN_Clustering(n_units, n_speakers)
+        self.rnn_cluster = RNN_Clusterer(n_units, n_speakers)
         ###
 #        from models.package.resegment import num_pred_seg
 #        self.segmenter = num_pred_seg(n_units)
@@ -62,9 +62,9 @@ class EDA_RC(nn.Module):
         self.encoder.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src, seq_lens, label=None,  change_points=None, has_mask=False,
-                th=0.5, beam_size=1, chunk_size=500):
+                th=0.5, beam_size=3, chunk_size=500):
+        device = src.device
         if has_mask:
-            device = src.device
             if self.src_mask is None or self.src_mask.size(0) != src.size(1):
                 mask = self._generate_square_subsequent_mask(src.size(1)).to(device)
                 self.src_mask = mask
@@ -87,8 +87,12 @@ class EDA_RC(nn.Module):
         src_chunked = torch.split(src, chunk_size, dim=0)
         mask_chunked = torch.split(src_padding_mask, chunk_size, dim=1)
         # output: (B, T, E)
-        enc_chunked = [self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m).transpose(0, 1)
-                        for s, m in zip(src_chunked, mask_chunked)]
+        enc_chunked = []
+        for s, m in zip(src_chunked, mask_chunked):
+            if m.any() == True: # all-padded chunk
+                enc_chunked.append(torch.zeros_like(enc_chunked[0]))
+            else:
+                enc_chunked.append(self.transformer_encoder(s, mask=self.src_mask, src_key_padding_mask=m).transpose(0, 1))
         seq_len_chunked = [(~m).sum(dim=-1) for m in mask_chunked]
 
 
@@ -98,44 +102,78 @@ class EDA_RC(nn.Module):
                             for e,a in zip(enc_chunked, att_chunked)]
 
 
-
         if label is not None:
             all_losses = []
 
-            active_prob = torch.stack(act_prob_chunked, dim=1)
-            spks_num = label.long().sum(dim=-1, keepdim=False).max(dim=-1, keepdim=False).values # (B, )
-            act_label = torch.zeros_like(active_prob)
-            for l in range(act_label.shape[0]):
-                act_label[l, :spks_num[l]] = 1
-            prob_loss = torch.stack([F.binary_cross_entropy(p, l) 
-                        for p,l in zip(active_prob, act_label)])
-            all_losses.append(prob_loss)
+            # active_prob = torch.stack(act_prob_chunked, dim=1) # B, #chunk, #spk+1
+            # spks_num = (label.sum(dim=1, keepdim=False) > 0).sum(dim=-1, keepdim=False) # (B, )
+            # act_label = torch.zeros_like(active_prob)
+            # for l in range(act_label.shape[0]):
+            #     act_label[l, :spks_num[l]] = 1
+            # prob_loss = torch.stack([F.binary_cross_entropy(p, l) 
+            #             for p,l in zip(active_prob, act_label)])
+            # all_losses.append(prob_loss)
 
             label_chunked = torch.split(label, chunk_size, dim=1)
-            pit_loss = torch.zeros_like(prob_loss)
-            for sub_output, sub_label, sub_len in zip(output_chunked, label_chunked, seq_len_chunked):
-                sub_spks_num = sub_label.long().sum(dim=-1, keepdim=False).max(dim=-1, keepdim=False).values
+
+            pit_order, spks_num = [], []
+            pit_loss, prob_loss = torch.tensor(0., device=device), torch.tensor(0., device=device)
+            for sub_output, sub_prob, sub_label, sub_len in zip(output_chunked, act_prob_chunked, label_chunked, seq_len_chunked):
+                spks_num_ = (sub_label.sum(dim=1, keepdim=False) > 0).sum(dim=-1, keepdim=False)
+                spks_num.append(spks_num_)
+                act_label_ = torch.zeros_like(sub_prob)
+                for l in range(act_label_.shape[0]):
+                    act_label_[l, :spks_num_[l]] = 1
+                try:
+                    prob_loss_ = torch.stack([F.binary_cross_entropy(p, l)#, reduction='sum') 
+                    for p,l in zip(sub_prob, act_label_)]).mean(dim=0)
+                except:
+                    print(sub_prob)
+                    raise ValueError
+                prob_loss += prob_loss_
+
                 valid_output = nn.utils.rnn.pad_sequence(
-                                [o[:, :n].transpose(-1,-2) for o,n in zip(sub_output, sub_spks_num)]
+                                [o[:, :n].transpose(-1,-2) for o,n in zip(sub_output, spks_num_)]
                                 , batch_first=True).transpose(-2,-1)
-                valid_output = F.pad(valid_output, pad=(0, sub_label.shape[-1]-valid_output.shape[-1]))
+                valid_output = F.pad(valid_output, pad=(0, sub_label.shape[-1]-valid_output.shape[-1])) # mask invalid embeddings
                 truth = [l[:ilen] for l,ilen in zip(sub_label, sub_len)]
                 pred = [o[:ilen] for o,ilen in zip(valid_output, sub_len)]
-                pit_loss += batch_pit_loss(pred, truth)[0]
-            all_losses.append(pit_loss)
-
+                pit_loss_ , _, pit_order_ = batch_pit_loss(pred, truth, output_order=True)
+                pit_loss += pit_loss_ #* sub_len.sum()
+                pit_order.append(pit_order_)
 
             spk_emb = torch.stack(att_chunked, dim=1) # N, #chunk, max_spk, D
-            zip_label = torch.stack([(l.sum(dim=1) != 0) for l in label_chunked])
-            cluster_loss = self.rnn_cluster(spk_emb, zip_label)
+            chunk_spk_nums = torch.stack(spks_num, dim=-1)
+            ordered_label = torch.tensor(pit_order, device=spk_emb.device, dtype=torch.float).transpose(0,1) # (N, #chunk, max_spk) 
+            cluster_loss = self.rnn_cluster(spk_emb, chunk_spk_nums, ordered_label)
+
+            all_losses.append(prob_loss)#  / chunk_spk_nums.sum()
+            all_losses.append(pit_loss)#  / seq_lens.sum()
             all_losses.append(cluster_loss)
+            # print(all_losses)
             return all_losses
         else:
             output, stat_outputs = [], {}
+            spks_num = []
+            spk_emb = [[j.squeeze(0) for j in i.squeeze(0).split(1, dim=0)] for i in torch.stack(att_chunked, dim=1).split(1, dim=0)]
+            for chunk_id, (sub_prob, sub_len) in enumerate(zip(act_prob_chunked, seq_len_chunked)):
+                spk_num_ = [np.where(p_ < th)[0] for p_ in sub_prob.cpu().detach().numpy()]
+                spk_num_ = [i[0] if i.size else None for i in spk_num_]
+                spks_num.append(spk_num_)
 
-            spk_emb = torch.stack(att_chunked, dim=1) # N, #chunk, max_spk, D
-            ext_prob = torch.stack(act_prob_chunked, dim=1)
-            output_shuffled = list(zip(output_chunked)) # N,#chunk, (len(chunk),max_spk)
+                for idx, n in enumerate(spk_num_):
+                    output_chunked[chunk_id][idx, :, n:] = 0
+                    spk_emb[idx][chunk_id] = spk_emb[idx][chunk_id][:n ,:]
+
+            self.rnn_cluster.decode_beam_search(spk_emb, beam_size)
+            print(spks_num)
+            print([[j.shape for j in i] for i in spk_emb])
+
+
+
+            # output = torch.cat(output, dim=1)
+            raise NotImplementedError
+
             print(output_shuffled)
 
 
@@ -167,27 +205,7 @@ class EDA_RC(nn.Module):
 
 
 
-    def get_attention_weight(self, src):
-        # NOTE: NOT IMPLEMENTED CORRECTLY!!!
-        attn_weight = []
-        def hook(module, input, output):
-            # attn_output, attn_output_weights = multihead_attn(query, key, value)
-            # output[1] are the attention weights
-            attn_weight.append(output[1])
-            
-        handles = []
-        for l in range(self.n_layers):
-            handles.append(self.transformer_encoder.layers[l].self_attn.register_forward_hook(hook))
 
-        self.eval()
-        with torch.no_grad():
-            self.forward(src)
-
-        for handle in handles:
-            handle.remove()
-        self.train()
-
-        return torch.stack(attn_weight)
 
 
 class PositionalEncoding(nn.Module):

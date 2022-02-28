@@ -1,18 +1,18 @@
 # training options
 model_type: EDA_RC
 gradclip: 5
-batchsize: 32
+batchsize: 16
 max_epochs: 50
 hidden_size: 256
 num_frames: 50000000
 num_speakers: 3
-optimizer: noam
-lr: 1.0
-gradient_accumulation_steps: 1
+optimizer: adam
+lr: 1e-4
+gradient_accumulation_steps: 2
 transformer_encoder_n_heads: 4
 transformer_encoder_n_layers: 4
 transformer_encoder_dropout: 0.1
 noam_warmup_steps: 100000
 seed: 777
-gpu: 4
-inherit_from: ./exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_v0.1/models/avg.th
+gpu: 2
+# inherit_from: ./exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_v0.1/models/avg.th

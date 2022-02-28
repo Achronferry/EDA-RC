@@ -2,11 +2,11 @@
 model_type: SC_EEND
 gradclip: 5
 batchsize: 32
-max_epochs: 20
+max_epochs: 50
 hidden_size: 256
 num_frames: 500
-optimizer: adam
-lr: 1e-4
+optimizer: noam
+lr: 1.0
 gradient_accumulation_steps: 1
 transformer_encoder_n_heads: 4
 transformer_encoder_n_layers: 4
@@ -14,4 +14,4 @@ transformer_encoder_dropout: 0.1
 noam_warmup_steps: 100000
 seed: 777
 gpu: 2
-inherit_from: ./exp/LibriSpeech_3/EEND/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_baseline/models/avg.th
+# inherit_from: ./exp/LibriSpeech_3/EEND/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000_baseline/models/avg.th

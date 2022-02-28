@@ -4,7 +4,7 @@ ulimit -S -n 4096
 
 export PYTHONPATH=`pwd`:$PYTHONPATH
 
-model_name=EEND_EDA
+model=EEND_EDA
 num_speaker=3
 stage=0
 
@@ -18,9 +18,9 @@ dev_adapt_dir=data/callhome/eval/callhome2_spk${num_speaker}
 pretrain_model=$pretrain_exp_dir/models/avg.th
 
 model_conf=$pretrain_exp_dir/models/param.yaml
-adapt_conf=conf/${model_name}/adapt.yaml
-feature_conf=conf/${model_name}/feature.yaml
-infer_conf=conf/${model_name}/infer.yaml
+adapt_conf=conf/${model}/adapt.yaml
+feature_conf=conf/${model}/feature.yaml
+infer_conf=conf/${model}/infer.yaml
 
 adapt_mark=`awk '/^batchsize|^lr|^num_frames|^gradclip|^noam_warmup_steps/ {sub(/: /,"_"); print $1} /^optimizer/ {print $2}' $adapt_conf |
                 paste -s -d '_'`
@@ -58,7 +58,7 @@ fi
 # Inferring
 if [ $stage -le 3 ]; then
     echo "Start inferring"
-	python run/infer_v2.py -c $infer_conf -c2 $model_conf -f $feature_conf $dev_adapt_dir $avg_model $infer_out_dir --num-speakers $num_speaker
+	python run/infer.py -c $infer_conf -c2 $model_conf -f $feature_conf $dev_adapt_dir $avg_model $infer_out_dir --num-speakers $num_speaker
 fi
 
 # Scoring
