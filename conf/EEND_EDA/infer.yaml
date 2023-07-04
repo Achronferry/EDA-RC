@@ -1,5 +1,6 @@
 # inference options
 model_type: EEND_EDA
 chunk_size: 2000000
+threshold: 0.5
 gpu: 1
 

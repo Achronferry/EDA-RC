@@ -1,5 +1,5 @@
 # inference options
 model_type: EEND
-chunk_size: 2000
+chunk_size: 2000000
 gpu: 1
 

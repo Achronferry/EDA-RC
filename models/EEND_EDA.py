@@ -14,7 +14,7 @@ from model_utils.loss import batch_pit_loss
 from models.package.spk_extractor import eda_spk_extractor
 
 class EEND_EDA(nn.Module):
-    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.2, has_pos=False, num_predict=False):
+    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=1024, dropout=0.2, has_pos=False, num_predict=False):
         """ Self-attention-based diarization model.
 
         Args:
@@ -110,10 +110,10 @@ class EEND_EDA(nn.Module):
 
             all_losses.append(prob_loss)
 
-            valid_output = nn.utils.rnn.pad_sequence(
-                            [o[:, :n].transpose(-1,-2) for o,n in zip(output, spks_num)]
-                            , batch_first=True).transpose(-2,-1)
-            valid_output = F.pad(valid_output, pad=(0, label.shape[-1]-valid_output.shape[-1]))
+            # output = nn.utils.rnn.pad_sequence(
+            #                 [o[:, :n].transpose(-1,-2) for o,n in zip(output, spks_num)]
+            #                 , batch_first=True).transpose(-2,-1)
+            valid_output = F.pad(output, pad=(0, label.shape[-1]-output.shape[-1]))
             truth = [l[:ilen] for l,ilen in zip(label, seq_lens)]
             pred = [o[:ilen] for o,ilen in zip(valid_output, seq_lens)]
             pit_loss, _ = batch_pit_loss(pred, truth)
@@ -124,19 +124,19 @@ class EEND_EDA(nn.Module):
             enc_chunked = torch.split(enc_output, chunk_size, dim=1)
             seq_len_chunked = [m.sum(dim=1) for m in torch.split(~src_padding_mask, chunk_size, dim=1)]
             output, stat_outputs = [], {}
-            for i, l in zip(enc_chunked, seq_len_chunked):
-                attractors, active_prob = self.decoder(i, l)
-                output.append(torch.sigmoid(torch.bmm(i, attractors.transpose(-1, -2))))
+            for enc, l in zip(enc_chunked, seq_len_chunked):
+                attractors, active_prob = self.decoder(enc, l)
+                output.append(torch.sigmoid(torch.bmm(enc, attractors.transpose(-1, -2))))
                 
                 spks_num = [np.where(p_ < th)[0] for p_ in active_prob.cpu().detach().numpy()]
-                spks_num = [i[0] if i.size else None for i in spks_num]
+                spks_num = [i[0] if i.size else active_prob.shape[-1] for i in spks_num]
 
                 for idx, n in enumerate(spks_num):
                     output[-1][idx, :, n:] = 0
 
             output = torch.cat(output, dim=1)
 
-            return (output > th), stat_outputs
+            return output, stat_outputs
 
 
 

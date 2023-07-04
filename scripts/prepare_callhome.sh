@@ -17,7 +17,7 @@ stage=0
 
 callhome_dir=~/data_store/LDC/LDC2001S97
 save_dir=data/callhome
-num_spk=2
+num_spk=6
 
 simu_actual_dirs=(
 /GPFS/data/chenyuyang/exp/RPE_EEND/local/diarization-data/callhome
@@ -99,7 +99,7 @@ if [ ${stage} -le 2 ]; then
     # Generate the fbank features; 
     for dset in callhome1_spk${num_spk} callhome2_spk${num_spk}; do
         # utils/fix_data_dir.sh  $save_dir/eval/$dset
-        preprocess/make_fbank.sh --cmd "$train_cmd" --nj 12 --write_utt2num_frames true --fbank_config conf/fbank.conf \
+        preprocess/make_fbank.sh --cmd "$train_cmd" --nj 1 --write_utt2num_frames true --fbank_config conf/fbank.conf \
             $save_dir/eval/$dset exp/make_fbank/callhome/$dset $simu_actual_dirs/fbank/$dset
         # utils/fix_data_dir.sh  $save_dir/eval/$dset
     done

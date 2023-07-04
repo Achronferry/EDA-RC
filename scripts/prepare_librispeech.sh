@@ -25,8 +25,8 @@ simu_opts_overlap=yes
 simu_opts_num_speaker=3
 simu_opts_sil_scale=8
 simu_opts_rvb_prob=0.5
-simu_opts_num_train=100000
-simu_opts_min_utts=10
+simu_opts_num_train=30000
+simu_opts_min_utts=10 # 3: 10~20 4: 8~15 5: 6~12 
 simu_opts_max_utts=20
 
 . cmd.sh
@@ -99,6 +99,7 @@ if [ $stage -le 1 ]; then
 
     for simu_opts_sil_scale in $simu_opts_sil_scale; do
         for dset in $trn_nm $dev_nm; do
+        # for dset in $trn_nm; do
             if [ "$dset" == "dev_clean" ] || [ "$dset" == "dev_clean_2" ] ; then
                 n_mixtures=500
             else
@@ -112,6 +113,7 @@ if [ $stage -le 1 ]; then
                     $random_mixture_cmd --n_speakers $simu_opts_num_speaker --n_mixtures $n_mixtures \
                     --speech_rvb_probability $simu_opts_rvb_prob \
                     --sil_scale $simu_opts_sil_scale \
+                    --min_utts $simu_opts_min_utts --max_utts $simu_opts_max_utts \
                     data/local/prepared_data/$dataset_name/$dset data/musan_noise_bg data/simu_rirs_8k \
                     \> $simudir/.work/mixture_$simuid.scp
                 nj=100
@@ -148,6 +150,7 @@ if [ ${stage} -le 2 ]; then
     fbankdir=fbank
     # Generate the fbank features; 
     for dset in $trn_nm $dev_nm; do
+    # for dset in $trn_nm; do
         if [ "$dset" == "dev_clean" ]; then
                 n_mixtures=500
             else

@@ -24,66 +24,35 @@ from model_utils import kaldi_data
 def prepare_inputs(kaldi_obj, recid, context_size, input_transform, subsampling=10, frame_shift=80, rate=8000, cpd_mode='none', cp_file=None):
     Y = kaldi_obj.load_feat(recid)
 
-    if cpd_mode == 'none':
-        CP = None
-    elif cpd_mode == 'oracle':
-        filtered_segments = kaldi_obj.segments[recid]
-        speakers = np.unique(
-            [kaldi_obj.utt2spk[seg['utt']] for seg
-            in filtered_segments]).tolist()
-        n_speakers = len(speakers)
-        T = torch.zeros((Y.shape[0], n_speakers), dtype=torch.long)
-        for seg in filtered_segments:
-            speaker_index = speakers.index(kaldi_obj.utt2spk[seg['utt']])
 
-            start_frame = np.rint(
-                seg['st'] * rate / frame_shift).astype(int)
-            end_frame = np.rint(
-                seg['et'] * rate / frame_shift).astype(int)
-            # rel_start = rel_end = None
-            # if start <= start_frame and start_frame < end:
-            #     rel_start = start_frame - start
-            # if start < end_frame and end_frame <= end:
-            #     rel_end = end_frame - start
-            # if rel_start is not None or rel_end is not None:
-            #     T[rel_start:rel_end, speaker_index] = 1
-            T[start_frame:end_frame, speaker_index] = 1
-        T = T[::subsampling]
-        CP = F.pad((torch.abs(T[1:] - T[:-1]).sum(dim=-1) != 0), pad=(1, 0))
-    elif cpd_mode[:8] == 'fix_len_':
-        chunk_size = int(cpd_mode[8:])
-        CP = torch.zeros(Y.shape[0], dtype=torch.long)[::subsampling]
-        for i in range(len(CP)):
-            if i % chunk_size == 0 and i != 0:
-                CP[i] = 1
-    elif cpd_mode == 'from_file':
-        assert cp_file is not None
-        CP = cp_file[recid]
-        CP = torch.tensor(CP)
-        # CP = F.pad((torch.abs(CP[1:] - CP[:-1]).sum(dim=-1) != 0), pad=(1, 0))
-    # elif cpd_mode == 'full':
-    #     wav, fs = kaldi_obj.load_wav(recid)
-    #     tracks = torch.tensor(get_pitch_segments(wav, fs), dtype=torch.long)
-    #     tracks = tracks[::subsampling]
-    #     CP = F.pad((torch.abs(tracks[1:] - tracks[:-1]).sum(dim=-1) != 0), pad=(1, 0))
-    else:
-        raise NotImplementedError
+    filtered_segments = kaldi_obj.segments[recid]
+    speakers = np.unique(
+        [kaldi_obj.utt2spk[seg['utt']] for seg
+        in filtered_segments]).tolist()
+    n_speakers = len(speakers)
+    T = torch.zeros((Y.shape[0], n_speakers), dtype=torch.long)
+    for seg in filtered_segments:
+        speaker_index = speakers.index(kaldi_obj.utt2spk[seg['utt']])
+        start_frame = np.rint(
+            seg['st'] * rate / frame_shift).astype(int)
+        end_frame = np.rint(
+            seg['et'] * rate / frame_shift).astype(int)
+        # rel_start = rel_end = None
+        # if start <= start_frame and start_frame < end:
+        #     rel_start = start_frame - start
+        # if start < end_frame and end_frame <= end:
+        #     rel_end = end_frame - start
+        # if rel_start is not None or rel_end is not None:
+        #     T[rel_start:rel_end, speaker_index] = 1
+        T[start_frame:end_frame, speaker_index] = 1
+    T = T[::subsampling]
 
     Y = feature.splice(Y, context_size=context_size)
     if input_transform == 'logmel23_mn':
         Y = Y - np.mean(Y, axis=0)
     Y = Y[::subsampling]
-    # print(Y.shape)
-    # print(CP.shape)
-    # print(recid)
-    if CP is not None:
-        if len(CP) > len(Y):
-            CP = CP[:len(Y)]
-        elif len(CP) < len(Y):
-            CP = F.pad(CP, pad=(0, len(Y)-len(CP)))
-        assert Y.shape[0] == CP.shape[0], f"{Y.shape[0]}, {CP.shape[0]}"
 
-    return Y, CP
+    return Y, T
 
 def infer(args):
     # Prepare model
@@ -116,16 +85,13 @@ def infer(args):
         # if args.input_transform == 'logmel23_mn':
         #     Y = Y - np.mean(Y, axis=0)
         # Y = Y[::args.subsampling]
-        Y,CP = prepare_inputs(kaldi_obj, recid, args.context_size, args.input_transform, args.subsampling, 
+        Y,T = prepare_inputs(kaldi_obj, recid, args.context_size, args.input_transform, args.subsampling, 
                             args.frame_shift, args.sampling_rate, cpd_mode=args.change_mode,cp_file=cp_file)
 
         with torch.no_grad():
             Y = torch.from_numpy(Y).to(device)
-            CP = CP.unsqueeze(0).to(device) if CP is not None else CP
 
-            ys, _ = model(Y.unsqueeze(0), seq_lens=torch.tensor([Y.shape[0]]).long().to(device), 
-                        change_points=CP, beam_size=args.beam_size, chunk_size=args.chunk_size, th=args.threshold)
-            outdata = ys[0].cpu().detach().numpy()
+            outdata = T.cpu().detach().numpy()
             if args.save_attention_weight == 1:
                 raise NotImplementedError()
         outfname = recid + '.h5'
@@ -180,8 +146,6 @@ if __name__ == '__main__':
                         help='input is chunked with this size')
     parser.add_argument('--context-size', default=0, type=int,
                         help='frame splicing')
-    parser.add_argument('--shuffle-rate', default=0., type=float,
-                        help='shuffle-rate for RNN-Clustering')
     parser.add_argument('--subsampling', default=1, type=int)
     parser.add_argument('--sampling-rate', default=16000, type=int,
                         help='sampling rate')

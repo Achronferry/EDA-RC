@@ -29,8 +29,8 @@ def _gen_frame_indices(
 
 
 def my_collate(batch):
-    data, target = list(zip(*batch))
-    return [data, target]
+    # data, target = list(zip(*batch))
+    return list(zip(*batch))
 
 
 class KaldiDiarizationDataset(torch.utils.data.Dataset):
@@ -47,6 +47,7 @@ class KaldiDiarizationDataset(torch.utils.data.Dataset):
             use_last_samples=False,
             label_delay=0,
             n_speakers=None,
+            use_spk_id=False
             ):
         self.data_dir = data_dir
         self.chunk_size = chunk_size
@@ -58,6 +59,7 @@ class KaldiDiarizationDataset(torch.utils.data.Dataset):
         self.n_speakers = n_speakers
         self.chunk_indices = []
         self.label_delay = label_delay
+        self.use_spk_id = use_spk_id
 
         self.data = kaldi_data.KaldiData(self.data_dir)
 
@@ -79,25 +81,27 @@ class KaldiDiarizationDataset(torch.utils.data.Dataset):
     def __getitem__(self, i):
         rec, st, ed = self.chunk_indices[i]
         if self.data.feats is None:
-            Y, T = feature.get_labeledSTFT(
+            Y, T, spk_id = feature.get_labeledSTFT(
                 self.data,
                 rec,
                 st,
                 ed,
                 self.frame_size,
                 self.frame_shift,
-                self.n_speakers)
+                self.n_speakers, 
+                use_speaker_id=True)
             # Y: (frame, num_ceps)
             Y = feature.transform(Y, self.input_transform)
         else:
-            Y, T = feature.get_labeledfeat(
+            Y, T, spk_id = feature.get_labeledfeat(
                 self.data,
                 rec,
                 st,
                 ed,
                 self.frame_size,
                 self.frame_shift,
-                self.n_speakers)
+                self.n_speakers, 
+                use_speaker_id=True)
             # Y: (frame, num_ceps)
             if self.input_transform == 'logmel23_mn':
                 Y = Y - np.mean(Y, axis=0)
@@ -111,4 +115,9 @@ class KaldiDiarizationDataset(torch.utils.data.Dataset):
 
         Y_ss = torch.from_numpy(Y_ss).float()
         T_ss = torch.from_numpy(T_ss).float()
-        return Y_ss, T_ss
+        if self.use_spk_id:
+            if "librispeech" in self.data_dir.lower():
+                spk_id = [i.split('-')[0] for i in spk_id]
+            return Y_ss, T_ss, spk_id
+        else:
+            return Y_ss, T_ss

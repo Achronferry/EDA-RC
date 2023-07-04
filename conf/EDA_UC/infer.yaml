@@ -1,7 +1,6 @@
 # inference options
-model_type: EDA_RC
+model_type: EDA_UC
 chunk_size: 50
-beam_size: 1
 threshold: 0.5
 gpu: 1
 

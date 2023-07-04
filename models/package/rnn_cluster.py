@@ -28,7 +28,8 @@ class RNN_Clusterer(nn.Module):
         device = spk_emb.device
         bsize, max_chunk_num, max_spk, _ = spk_emb.shape
         #TODO mask invalid embeddings?
-        clusters = self.rnn_init_hidden.unsqueeze(0).expand(bsize, max_spk, -1) #(N, max_spk, D)
+        num_cluster = int((torch.max(label) + 1).cpu().item())
+        clusters = self.rnn_init_hidden.unsqueeze(0).expand(bsize, num_cluster, -1) #(N, max_cluster, D)
 
         chunk_losses = torch.tensor(0., device=device)
         for n_step in range(max_chunk_num):
@@ -46,15 +47,17 @@ class RNN_Clusterer(nn.Module):
             chunk_losses += step_loss.sum()
             # chunk_log_probs.append(chunk_log_probs)
             # Update states
-            ordered_emb = torch.gather(step_emb, dim=1, index=step_label.unsqueeze(-1).expand_as(step_emb))
-            stack_outp = self.mixer(ordered_emb.reshape(bsize*max_spk, -1), clusters.reshape(bsize*max_spk, -1)).reshape(bsize, max_spk, -1)
+            ordered_clusters = torch.gather(clusters, dim=1, index=step_label.unsqueeze(-1).expand_as(step_emb))
+            # ordered_emb = torch.gather(step_emb, dim=1, index=step_label.unsqueeze(-1).expand_as(step_emb)) #ver 1.0
+            stack_outp = self.mixer(step_emb.reshape(bsize*max_spk, -1), ordered_clusters.reshape(bsize*max_spk, -1)).reshape(bsize, max_spk, -1)
             for b in range(bsize):
                 ind2 = step_label[b, :n_spk[b]]
                 ind1 = torch.ones_like(ind2) * b
                 # clusters[b, step_label[b, :n_spk[b]],:] = stack_outp[b, step_label[b, :n_spk[b]],:]
-                clusters = clusters.index_put((ind1, ind2), stack_outp[b, ind2])
+                # clusters = clusters.index_put((ind1, ind2), stack_outp[b, ind2]) #ver 1.0
+                clusters = clusters.index_put((ind1, ind2), stack_outp[b, :n_spk[b]])
         chunk_losses = chunk_losses / spk_nums.sum().float()
-        return chunk_losses
+        return chunk_losses, clusters
 
     # TODO for a certain number of speakers
     def decode_fix_spk(self, spk_emb, spk_num):
@@ -63,30 +66,63 @@ class RNN_Clusterer(nn.Module):
             sim_score = torch.mm(chunk, exist_clusters.transpose(0, 1))
         pass
 
-    def decode_beam_search(self, spk_emb, beam_size=3):
+    def decode_beam_search(self, spk_emb, beam_size=3, hidden_states=None):
         '''
         spk_emb: List of [Tensor(#chunk_spk, D), Tensor(#chunk_spk, D), Tensor(#chunk_spk, D), ...]
         '''
-        #TODO beam search?
-        # beams = [BeamState(device=self.rnn_init_hidden.device)]
-        exist_clusters = self.rnn_init_hidden
+        beams = [BeamState(device=self.rnn_init_hidden.device)]
+        beams[0].hidden_states = hidden_states
+
         for chunk in spk_emb:
-            sim_score = F.log_softmax(torch.mm(chunk, exist_clusters.transpose(0, 1)))
-            expand_sim_score = F.pad(sim_score, (0,chunk.shape[0] - 1,0,0), mode='replicate')
+
+            if chunk.shape[0] == 0:
+                beams = [b.pad() for b in beams]
+                continue
+
+            new_beams = []
+            while beams != []:
+                b = beams.pop(0)
+                exist_clusters = self.rnn_init_hidden if b.hidden_states is None \
+                                    else torch.cat([b.hidden_states, self.rnn_init_hidden], dim=0)
+
+                sim_score = F.log_softmax(torch.mm(chunk, exist_clusters.transpose(0, 1)), dim=-1)
+                spk_num, clus_num = sim_score.shape
+                # expand_sim_score = F.pad(sim_score, (0,min(chunk.shape[0] - 1, self.n_speakers - sim_score.shape[0]) ,0,0), mode='replicate') # N-spk, N-cluster, leq self.n_speakers
+                all_perms = torch.tensor([list(x) for x in set(itertools.permutations(list(range(clus_num - 1)) + [-1 for _ in range(min(spk_num, self.n_speakers - clus_num + 1))], spk_num))], device=sim_score.device)
+                all_scores = torch.stack([sim_score[list(range(spk_num)), i].sum() for i in all_perms], dim=0)
+
+                hyp_scores = torch.topk(all_scores, min(beam_size, all_scores.shape[0]))
+                # print(hyp_scores)
+
+                new_hyp_scores = hyp_scores.values
+                new_hyp_perms = all_perms[hyp_scores.indices]
+
+                for p,s in zip(new_hyp_perms, new_hyp_scores):
+                    if len(new_beams) >= beam_size and s < new_beams[-1].score:
+                        break
+                    # i = p.long().argmax(dim=-1) #[[0,1,0], [0,0,1]] -> [2,3]
+                    before_hiddens = exist_clusters[p]
+                    after_hiddens = self.mixer(chunk, before_hiddens)
+                    next_h_ex = exist_clusters[:-1].clone()
+
+                    new_spk_pos = torch.nonzero(p==-1).squeeze(-1)
+                    p[new_spk_pos] = torch.arange(clus_num - 1, clus_num - 1 + new_spk_pos.shape[0], device=p.device)
+                    next_h = F.pad(next_h_ex, (0,0,0, new_spk_pos.shape[0]))
+                    next_h[p] = after_hiddens
+                    
+                    new_beams.append(b.clone_and_apply(s, next_h, None, p))
+                    new_beams.sort(key=lambda x: x.score, reverse=True)
+                    new_beams = new_beams[:beam_size]
+            beams = new_beams[:beam_size]
+
+        return beams
+
+    def decode_refine(self, spk_emb, beam_size=3):
+        hidden_init = self.decode_beam_search(spk_emb, beam_size=1)[0].hidden_states
+
+        return self.decode_beam_search(spk_emb, beam_size, hidden_states=hidden_init)
 
 
-
-
-            
-            pass
-
-
-            
-
-
-
-            
-            pass
 
 class RNN_Clusterer_p(nn.Module):
     def __init__(self, n_units, n_speakers, rnn_cell='GRU', dropout=0.2):
@@ -233,7 +269,7 @@ class RNN_Clusterer_p(nn.Module):
 
                 for p,s in zip(new_hyp_perms, new_hyp_scores):
                     if len(new_beams) >= beam_size and s < new_beams[-1].score:
-                        continue
+                        break
 
                     i = p.long().argmax(dim=-1) #[[0,1,0], [0,0,1]] -> [2,3]
                     before_hiddens = prev_h[i]
@@ -249,8 +285,9 @@ class RNN_Clusterer_p(nn.Module):
                     next_h = next_h[torch.nonzero(avail_mask, as_tuple=True)]
                     # next_h = torch.masked_select(next_h, avail_h)
                     new_beams.append(b.clone_and_apply(s, next_h, new_label,i))
+                    new_beams.sort(key=lambda x: x.score, reverse=True)
+                    new_beams = new_beams[:beam_size]
 
-                new_beams.sort(key=lambda x: x.score, reverse=True)
             beams = new_beams[:beam_size]
                 # rnn_hiddens = torch.index_select(prev_h, new_hyp_indices)
                 # new_hiddens = self.mixer(, rnn_hiddens
@@ -296,6 +333,7 @@ class BeamState:
     def pad(self):
         self.T += 1
         self.pred.append(torch.zeros((1), device=self.device))
+        self.pred_order.append(torch.zeros((0), device=self.device))
         return self
 
 

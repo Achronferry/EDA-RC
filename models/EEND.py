@@ -13,7 +13,7 @@ from torch.nn import TransformerEncoder, TransformerEncoderLayer
 from model_utils.loss import batch_pit_loss
 
 class EEND(nn.Module):
-    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=2048, dropout=0.5, has_pos=False, num_predict=False):
+    def __init__(self, n_speakers, in_size, n_heads, n_units, n_layers, dim_feedforward=1024, dropout=0.5, has_pos=False, num_predict=False):
         """ Self-attention-based diarization model.
 
         Args:

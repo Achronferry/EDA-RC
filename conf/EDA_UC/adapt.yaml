@@ -1,9 +1,10 @@
 # adapt options
-model_type: EEND_EDA
+model_type: EDA_UC
 gradclip: 5
 batchsize: 32
-max_epochs: 20
+max_epochs: 100
 num_frames: 500
+chunk_size: 50
 optimizer: adam
 lr: 1e-5
 gradient_accumulation_steps: 1

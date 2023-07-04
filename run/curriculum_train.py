@@ -45,6 +45,7 @@ def process_stat_output(stat_dict, label):
   
 
 
+
 def train(args):
     """ Training model with pytorch backend.
     This function is called from eend/bin/train.py with
@@ -54,7 +55,7 @@ def train(args):
     formatter = logging.Formatter("[ %(levelname)s : %(asctime)s ] - %(message)s")
     logging.basicConfig(level=logging.DEBUG, format="[ %(levelname)s : %(asctime)s ] - %(message)s")
     logger = logging.getLogger("Pytorch")
-    fh = logging.FileHandler(args.model_save_dir + "/train.log", mode='w')
+    fh = logging.FileHandler(args.model_save_dir + "/curriculum.log", mode='w')
     fh.setFormatter(formatter)
     logger.addHandler(fh)
     # ===================================================================
@@ -77,7 +78,7 @@ def train(args):
         use_last_samples=True,
         label_delay=args.label_delay,
         n_speakers=args.num_speakers,
-        # use_spk_id=args.curriculum,
+        use_spk_id=True
         )
     dev_set = KaldiDiarizationDataset(
         data_dir=args.valid_data_dir,
@@ -91,10 +92,11 @@ def train(args):
         use_last_samples=True,
         label_delay=args.label_delay,
         n_speakers=args.num_speakers,
+        use_spk_id=True
         )
 
     # Prepare model
-    Y, T = next(iter(train_set))[:2]
+    Y, T = next(iter(train_set))
     model = constract_models(args, Y.shape[1], args.model_save_dir + "/param.yaml")
 
 
@@ -154,8 +156,6 @@ def train(args):
     if args.initmodel:
         logger.info(f"Load model from {args.initmodel}")
         model.load_state_dict(torch.load(args.initmodel))
-        # stat_dict = torch.load(args.initmodel)
-        # model.load_state_dict({k:stat_dict[k] for k in stat_dict if 'decoder' not in k}, strict=False)
     elif args.resume != 0:
         last_epoch_model = os.path.join(args.model_save_dir, f"transformer{args.resume}.th")
         model.load_state_dict(torch.load(last_epoch_model))
@@ -174,13 +174,7 @@ def train(args):
         optimizer.zero_grad()
         loss_epoch = None
         num_total = 0
-        for step, batch in tqdm(enumerate(train_iter), ncols=100, total=len(train_iter)):
-            # if args.curriculum:
-            #     y, t, spk_id  = batch
-            #     id_sets = np.unique(spk_id).tolist()
-            #     spk_id = torch.tensor([[id_sets.index(j) for j in i] for i in spk_id], device=device)
-            # else:
-            y, t = batch 
+        for step, (y, t) in tqdm(enumerate(train_iter), ncols=100, total=len(train_iter)):
             ilens = torch.tensor([yi.shape[0] for yi in y]).long().to(device)
             y = nn.utils.rnn.pad_sequence(y, padding_value=0, batch_first=True).to(device)
             t = nn.utils.rnn.pad_sequence(t, padding_value=0, batch_first=True).to(device)
@@ -217,7 +211,7 @@ def train(args):
                 # cp = F.pad((torch.abs(t[:, 1:] - t[:, :-1]).sum(dim=-1) != 0), pad=(1, 0))
                 output, stat_dict = model(y, seq_lens=ilens, beam_size=1, 
                                             chunk_size=(args.chunk_size if args.chunk_size > 0 else y.shape[1]))
-                output = [out[:ilen] for out, ilen in zip((output > 0.5).float(), ilens)]
+                output = [out[:ilen] for out, ilen in zip(output.float(), ilens)]
                 truth = [ti[:ilen] for ti, ilen in zip(t, ilens)]
 
                 _, label = loss_func.batch_pit_loss(output, truth)
@@ -241,7 +235,7 @@ def train(args):
         loss_info = '/'.join([f"{i:.5f}" for i in loss_epoch])
         logger.info(f"Epoch: {epoch:3d}, LR: {optimizer.param_groups[0]['lr']:.7f},\
             Training Loss: {loss_info}, Dev Stats: {stats_avg}")
-        model_filename = os.path.join(args.model_save_dir, f"transformer{epoch}.th")
+        model_filename = os.path.join(args.model_save_dir, f"curriculum{epoch}.th")
         torch.save(model.state_dict(), model_filename)
         torch.save(optimizer.state_dict(), os.path.join(args.model_save_dir, "last.optim"))
 
@@ -307,7 +301,7 @@ if __name__=='__main__':
     parser.add_argument('--inherit-from', default=None, type=str,
                         help='train from EEND (FOR EDA)')
     parser.add_argument('--loss_factor', default=None, type=str,
-                            help='coefficients of each loss, eg: 0.5/0.5/1')
+                            help='coefficients of each loss, eg: 0.5_0.5_1')
     parser.add_argument('--context-size', default=0, type=int)
     parser.add_argument('--subsampling', default=1, type=int)
     parser.add_argument('--frame-size', default=1024, type=int)
@@ -325,5 +319,5 @@ if __name__=='__main__':
         os.makedirs(args.model_save_dir)
 
     if args.loss_factor is not None:
-        args.loss_factor = [float(i) for i in args.loss_factor.split('/')]
+        args.loss_factor = [float(i) for i in args.loss_factor.split('_')]
     train(args)

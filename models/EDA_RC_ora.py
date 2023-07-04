@@ -115,16 +115,16 @@ class EDA_RC(nn.Module):
         tgt_mask = torch.ones((n_chunk * n_spk, n_chunk * n_spk), device=spk_emb.device).bool() #seperate chunks
         for i in range(0, n_chunk):
             tgt_mask[i*n_spk : i*n_spk + n_spk, i*n_spk : i*n_spk + n_spk] = False
-        spk_emb = self.spk_emb_extractor(spk_emb.reshape(bsize, n_chunk*n_spk, -1).transpose(0,1).detach(), enc_output_t.detach(), 
+        spk_emb = self.spk_emb_extractor(spk_emb.reshape(bsize, n_chunk*n_spk, -1).transpose(0,1), enc_output_t, 
                                         memory_key_padding_mask=src_padding_mask, tgt_mask=tgt_mask)
         spk_emb = spk_emb.transpose(0,1).reshape(bsize, n_chunk, n_spk, -1)
           
         if label is not None:
             all_losses = []
-            # global loss
-            global_attractors, global_active_prob = self.decoder(enc_output, seq_lens)
-            global_output = torch.sigmoid(torch.bmm(enc_output, global_attractors.transpose(-1, -2))) # (B, T, C)
-            all_losses += self.calculate_eda_loss(global_output, global_active_prob, seq_lens, label)[0]
+            # # global loss
+            # global_attractors, global_active_prob = self.decoder(enc_output, seq_lens)
+            # global_output = torch.sigmoid(torch.bmm(enc_output, global_attractors.transpose(-1, -2))) # (B, T, C)
+            # all_losses += self.calculate_eda_loss(global_output, global_active_prob, seq_lens, label)[0]
 
             label_chunked = torch.split(label, chunk_size, dim=1)
             pit_order, spks_num = [], []
@@ -174,11 +174,7 @@ class EDA_RC(nn.Module):
             all_losses.append(cluster_loss)
             return all_losses
         else:
-            # Switch
-            # global_out, global_stat = self.global_inference(enc_output, seq_lens)
-            # if global_stat["spk_num"] < 3:
-            #     return global_out, global_stat
-
+            
             output, stat_outputs = [], {}
             spks_num = []
             unzip_spk_emb = [[j for j in i] for i in spk_emb]
@@ -191,10 +187,21 @@ class EDA_RC(nn.Module):
                     # output_chunked[chunk_id][idx, :, n:] = 0
                     unzip_spk_emb[idx][chunk_id] = unzip_spk_emb[idx][chunk_id][:n ,:]
 
+            oracle = kargs.pop('oracle')
+            oracle = torch.split(F.pad(oracle, (0,0,0,padded_len)), chunk_size, dim=1)
+            best_orders = []
+            for sub_output, sub_prob, sub_label, sub_len in zip(output_chunked, act_prob_chunked, oracle, seq_len_chunked):
+                [prob_loss_, pit_loss_], spks_num_, pit_order_ = self.calculate_eda_loss(sub_output, sub_prob, sub_len, sub_label)
+                best_orders.append(pit_order_)
             for nb, e in enumerate(unzip_spk_emb):
+                
+                best_order = [k[nb][:len(l)] for (k,l) in zip(best_orders, e)]
 
-                beams = self.rnn_cluster.decode_beam_search(e, beam_size)
-                best_order = beams[0].pred_order
+
+                # # beams = self.rnn_cluster.decode_beam_search(e, beam_size)
+                # beams = self.rnn_cluster.decode_refine(e, beam_size)
+                # best_order = beams[0].pred_order
+
                 # assert len(e) == len(best_order)
                 # spk_num = max(list(map(lambda x: (x.max().cpu().item()+1 if len(x) != 0 else 0), best_order)))
                 # print(spk_num)
@@ -212,7 +219,7 @@ class EDA_RC(nn.Module):
 
             # output = nn.utils.rnn.pad_sequence([i.transpose(-1,-2) for i in output], batch_first=True).transpose(-1,-2)
             output = torch.stack(output, dim=0)
-            return output, stat_outputs
+            return (output > th), stat_outputs
 
     def calculate_eda_loss(self, output, active_prob, seq_lens, label):
             losses = []
@@ -252,25 +259,6 @@ class EDA_RC(nn.Module):
 
         return shuffled_spk_emb, shuffled_spk_nums, shuffled_labels
 
-    def global_inference(self, enc_output, seq_len, th=0.5):
-        enc_chunked = [enc_output]
-        seq_len_chunked = [seq_len]
-        output, stat_outputs = [], {}
-        for i, l in zip(enc_chunked, seq_len_chunked):
-            attractors, active_prob = self.decoder(i, l)
-            output.append(torch.sigmoid(torch.bmm(i, attractors.transpose(-1, -2))))
-                
-            spks_num = [np.where(p_ < th)[0] for p_ in active_prob.cpu().detach().numpy()]
-            spks_num = [i[0] if i.size else active_prob.shape[-1] for i in spks_num]
-            # Here has a bug, only suit for bsize=1 !!!
-            stat_outputs["spk_num"] = max(max(spks_num), stat_outputs.get("spk_num", 0))
-
-            for idx, n in enumerate(spks_num):
-                output[-1][idx, :, n:] = 0
-
-        output = torch.cat(output, dim=1)
-
-        return output, stat_outputs
 class PositionalEncoding(nn.Module):
     """Inject some information about the relative or absolute position of the tokens
         in the sequence. The positional encodings have the same dimension as

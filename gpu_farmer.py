@@ -94,12 +94,13 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--power_require", help="For each gpu, how much power capacity is needed at least; -1 means no power limit;",
                         type=int, default=-1)
     parser.add_argument("--gpu_index", help="Choose gpus from following device ids, default: all;",
-                        type=list)
+                        type=str)
     parser.add_argument("--interval", help="Scan once every ? seconds;",
                         type=int, default=2)
     parser.add_argument("-f", "--occupy", help="whether to occupy the memory, default: False",
                         action="store_true")
     args=parser.parse_args()
+    args.gpu_index = [int(i) for i in args.gpu_index.split("_")] if args.gpu_index is not None else None
     print(args)
     narrow_setup(**vars(args))
     #exit(','.join(available_gpus))

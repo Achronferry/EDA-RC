@@ -4,31 +4,24 @@ ulimit -S -n 4096
 
 export PYTHONPATH=`pwd`:$PYTHONPATH
 
-model_name=EEND_EDA
-num_speaker=3
+model=EDA_RC
+num_speaker=4
 stage=0
 
 pretrain_exp_dir=
 suffix=
+dev_adapt_dir=data/LibriSpeech/data/dev_clean_ns4_beta12_500
 
 . utils/parse_options.sh || exit 1;
-dev_adapt_dir=data/callhome/eval/callhome2_spk${num_speaker}
 
-pretrain_model=$pretrain_exp_dir/adapt_callhome_3/gradclip_5_batchsize_32_num_frames_500_adam_lr_1e-4/models_adapt/avg.th
 
-model_conf=$pretrain_exp_dir/adapt_callhome_3/gradclip_5_batchsize_32_num_frames_500_adam_lr_1e-4/models_adapt/param.yaml
-adapt_conf=conf/${model_name}/adapt.yaml
-feature_conf=conf/${model_name}/feature.yaml
-infer_conf=conf/${model_name}/infer.yaml
+pretrain_model=$pretrain_exp_dir/models/avg.th
+model_conf=$pretrain_exp_dir/models/param.yaml
 
-adapt_mark=`awk '/^batchsize|^lr|^num_frames|^gradclip|^noam_warmup_steps/ {sub(/: /,"_"); print $1} /^optimizer/ {print $2}' $adapt_conf |
-                paste -s -d '_'`
+feature_conf=conf/${model}/feature.yaml
+infer_conf=conf/${model}/infer.yaml
 
-exp_dir=$pretrain_exp_dir/adapt_callhome_${num_speaker}/$adapt_mark$suffix
-max_epoch=`awk '/max_epochs/ {print $2}' $adapt_conf`
-cpd_mode=`awk '/change_mode/ {print $2}' $infer_conf`
-model_adapt_dir=$exp_dir/models_adapt
-
+exp_dir=$pretrain_exp_dir/eval_${dev_adapt_dir##*/}$suffix
 
 infer_out_dir=$exp_dir/infer/simu
 
@@ -36,12 +29,10 @@ work=$infer_out_dir/.work
 scoring_dir=$exp_dir/score
 
 
-
-
 # Inferring
 if [ $stage -le 3 ]; then
     echo "Start inferring"
-	python run/infer_v2.py -c $infer_conf -c2 $model_conf -f $feature_conf $dev_adapt_dir $pretrain_model $infer_out_dir --num-speakers $num_speaker
+	python run/infer.py -c $infer_conf -c2 $model_conf -f $feature_conf $dev_adapt_dir $pretrain_model $infer_out_dir --num-speakers $num_speaker
 fi
 
 # Scoring

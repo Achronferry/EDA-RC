@@ -279,7 +279,7 @@ def get_labeledSTFT(
                 S[rel_start:rel_end, all_speaker_index] = 1
 
     if use_speaker_id:
-        return Y, T, S
+        return Y, T, speakers
     else:
         return Y, T
 
@@ -304,14 +304,14 @@ def get_labeledfeat(
         n_speakers = len(speakers)
     T = np.zeros((Y.shape[0], n_speakers), dtype=np.int32)
 
-    if use_speaker_id:
-        all_speakers = sorted(kaldi_obj.spk2utt.keys())
-        S = np.zeros((Y.shape[0], len(all_speakers)), dtype=np.int32)
+    # if use_speaker_id:
+    #     all_speakers = sorted(kaldi_obj.spk2utt.keys())
+    #     S = np.zeros((Y.shape[0], len(all_speakers)), dtype=np.int32)
 
     for seg in filtered_segments:
         speaker_index = speakers.index(kaldi_obj.utt2spk[seg['utt']])
-        if use_speaker_id:
-            all_speaker_index = all_speakers.index(kaldi_obj.utt2spk[seg['utt']])
+        # if use_speaker_id:
+        #     all_speaker_index = all_speakers.index(kaldi_obj.utt2spk[seg['utt']])
         start_frame = np.rint(
             seg['st'] * rate / frame_shift).astype(int)
         end_frame = np.rint(
@@ -323,10 +323,10 @@ def get_labeledfeat(
             rel_end = end_frame - start
         if rel_start is not None or rel_end is not None:
             T[rel_start:rel_end, speaker_index] = 1
-            if use_speaker_id:
-                S[rel_start:rel_end, all_speaker_index] = 1
+            # if use_speaker_id:
+            #     S[rel_start:rel_end, all_speaker_index] = 1
 
     if use_speaker_id:
-        return Y, T, S
+        return Y, T, speakers
     else:
         return Y, T
