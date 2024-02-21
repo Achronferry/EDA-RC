@@ -1,0 +1,112 @@
+[ INFO : 2022-03-11 17:50:57,678 ] - namespace(config=[<yamlargparse.Path object at 0x7fa36e102a00>], config2=None, feature_config=[<yamlargparse.Path object at 0x7fa36e10a790>], train_data_dir='data/LibriSpeech/data/train_clean_360_ns3_beta8_100000', valid_data_dir='data/LibriSpeech/data/dev_clean_ns3_beta8_500', model_save_dir='exp/LibriSpeech_3/EDA_UC/gradclip_5_batchsize_32_num_frames_500_adam_lr_1e-5_noam_warmup_steps_100000/models', model_type='EDA_UC', initmodel='', resume=0, gpu=2, max_epochs=20, input_transform='logmel23_mn', lr=1e-05, optimizer='adam', num_speakers=3, gradclip=5, num_frames=500, batchsize=32, label_delay=0, hidden_size=256, in_size=None, rnn_cell='LSTM', chunk_size=50, shuffle_rate=0.0, inherit_from='./exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000/models/avg.th', loss_factor=None, context_size=7, subsampling=10, frame_size=200, frame_shift=80, sampling_rate=8000, noam_warmup_steps=100000.0, transformer_encoder_n_heads=4, transformer_encoder_n_layers=4, transformer_encoder_dropout=0.1, gradient_accumulation_steps=1, seed=777)
+[ INFO : 2022-03-11 17:51:27,034 ] - Prepared model
+[ INFO : 2022-03-11 17:51:27,035 ] - DataParallel(
+  (module): EDA_UC(
+    (encoder): Linear(in_features=345, out_features=256, bias=True)
+    (encoder_norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+    (transformer_encoder): TransformerEncoder(
+      (layers): ModuleList(
+        (0): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (1): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (2): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (3): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+      )
+    )
+    (decoder): eda_spk_extractor(
+      (rnn_encoder): LSTM(256, 256, batch_first=True)
+      (attractor): LSTM(256, 256, batch_first=True)
+      (discriminator): Sequential(
+        (0): Linear(in_features=256, out_features=1, bias=True)
+        (1): Sigmoid()
+      )
+      (project): Linear(in_features=256, out_features=256, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (spk_emb_extractor): TransformerDecoder(
+      (layers): ModuleList(
+        (0): TransformerDecoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (multihead_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm3): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+          (dropout3): Dropout(p=0.1, inplace=False)
+        )
+      )
+    )
+  )
+)
+[ INFO : 2022-03-12 00:47:04,031 ] - Epoch:   1, LR: 0.0000100,            Training Loss: 0.11751/0.09270/0.36307/0.07699/0.15056, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 30.53, 'speech_falarm': 3.93, 'speaker_scored': 535.18, 'speaker_miss': 82.08, 'speaker_falarm': 14.61, 'speaker_error': 11.73, 'correct': 421.0, 'diarization_error': 108.42, 'frames': 461.05, 'DER': 20.26, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-12 08:01:47,489 ] - Epoch:   2, LR: 0.0000100,            Training Loss: 0.10695/0.09286/0.26888/0.07314/0.14025, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 25.64, 'speech_falarm': 3.81, 'speaker_scored': 535.18, 'speaker_miss': 55.63, 'speaker_falarm': 16.01, 'speaker_error': 11.6, 'correct': 429.44, 'diarization_error': 83.24, 'frames': 461.05, 'DER': 15.55, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-12 14:53:55,768 ] - Epoch:   3, LR: 0.0000100,            Training Loss: 0.11356/0.09346/0.23202/0.07237/0.13864, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 33.24, 'speech_falarm': 3.47, 'speaker_scored': 535.18, 'speaker_miss': 60.72, 'speaker_falarm': 15.68, 'speaker_error': 11.14, 'correct': 428.16, 'diarization_error': 87.54, 'frames': 461.05, 'DER': 16.36, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-12 23:11:20,393 ] - Epoch:   4, LR: 0.0000100,            Training Loss: 0.09048/0.09406/0.21679/0.07239/0.13683, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 26.04, 'speech_falarm': 3.56, 'speaker_scored': 535.18, 'speaker_miss': 49.81, 'speaker_falarm': 16.57, 'speaker_error': 12.22, 'correct': 430.78, 'diarization_error': 78.59, 'frames': 461.05, 'DER': 14.69, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-13 07:18:56,190 ] - Epoch:   5, LR: 0.0000100,            Training Loss: 0.09448/0.09399/0.19937/0.07186/0.13570, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 18.07, 'speech_falarm': 3.86, 'speaker_scored': 535.18, 'speaker_miss': 38.4, 'speaker_falarm': 17.7, 'speaker_error': 12.38, 'correct': 434.1, 'diarization_error': 68.48, 'frames': 461.05, 'DER': 12.8, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-13 15:57:41,289 ] - Epoch:   6, LR: 0.0000100,            Training Loss: 0.08994/0.09399/0.19176/0.07141/0.13490, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 27.85, 'speech_falarm': 3.45, 'speaker_scored': 535.18, 'speaker_miss': 50.27, 'speaker_falarm': 15.87, 'speaker_error': 12.2, 'correct': 430.88, 'diarization_error': 78.34, 'frames': 461.05, 'DER': 14.64, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-13 23:58:39,774 ] - Epoch:   7, LR: 0.0000100,            Training Loss: 0.08327/0.09393/0.18958/0.07141/0.13457, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 33.71, 'speech_falarm': 3.58, 'speaker_scored': 535.18, 'speaker_miss': 52.1, 'speaker_falarm': 17.36, 'speaker_error': 11.03, 'correct': 430.55, 'diarization_error': 80.5, 'frames': 461.05, 'DER': 15.04, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-14 07:57:15,992 ] - Epoch:   8, LR: 0.0000100,            Training Loss: 0.08759/0.09389/0.17682/0.07092/0.13384, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 25.2, 'speech_falarm': 3.85, 'speaker_scored': 535.18, 'speaker_miss': 44.32, 'speaker_falarm': 17.55, 'speaker_error': 12.56, 'correct': 432.06, 'diarization_error': 74.43, 'frames': 461.05, 'DER': 13.91, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-14 16:12:59,507 ] - Epoch:   9, LR: 0.0000100,            Training Loss: 0.08929/0.09511/0.17561/0.07151/0.13479, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 22.67, 'speech_falarm': 3.63, 'speaker_scored': 535.18, 'speaker_miss': 43.67, 'speaker_falarm': 16.88, 'speaker_error': 13.25, 'correct': 432.04, 'diarization_error': 73.8, 'frames': 461.05, 'DER': 13.79, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-15 01:27:54,828 ] - Epoch:  10, LR: 0.0000100,            Training Loss: 0.08667/0.09502/0.16906/0.07164/0.13435, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 25.61, 'speech_falarm': 3.41, 'speaker_scored': 535.18, 'speaker_miss': 44.67, 'speaker_falarm': 16.79, 'speaker_error': 13.82, 'correct': 431.35, 'diarization_error': 75.29, 'frames': 461.05, 'DER': 14.07, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-15 11:10:29,655 ] - Epoch:  11, LR: 0.0000100,            Training Loss: 0.08889/0.09401/0.15720/0.07051/0.13344, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 20.55, 'speech_falarm': 3.44, 'speaker_scored': 535.18, 'speaker_miss': 40.71, 'speaker_falarm': 15.45, 'speaker_error': 13.11, 'correct': 433.59, 'diarization_error': 69.28, 'frames': 461.05, 'DER': 12.95, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-15 20:07:38,314 ] - Epoch:  12, LR: 0.0000100,            Training Loss: 0.08191/0.09579/0.16133/0.07104/0.13378, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 14.54, 'speech_falarm': 3.97, 'speaker_scored': 535.18, 'speaker_miss': 32.44, 'speaker_falarm': 18.4, 'speaker_error': 15.01, 'correct': 434.1, 'diarization_error': 65.85, 'frames': 461.05, 'DER': 12.3, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-16 03:42:07,105 ] - Epoch:  13, LR: 0.0000100,            Training Loss: 0.07697/0.09621/0.15678/0.07147/0.13417, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 18.15, 'speech_falarm': 3.49, 'speaker_scored': 535.18, 'speaker_miss': 36.78, 'speaker_falarm': 16.73, 'speaker_error': 14.85, 'correct': 433.32, 'diarization_error': 68.36, 'frames': 461.05, 'DER': 12.77, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-16 10:51:20,880 ] - Epoch:  14, LR: 0.0000100,            Training Loss: 0.07490/0.09615/0.15505/0.07160/0.13366, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 25.9, 'speech_falarm': 3.35, 'speaker_scored': 535.18, 'speaker_miss': 50.82, 'speaker_falarm': 15.64, 'speaker_error': 15.12, 'correct': 428.82, 'diarization_error': 81.58, 'frames': 461.05, 'DER': 15.24, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-16 18:25:23,674 ] - Epoch:  15, LR: 0.0000100,            Training Loss: 0.07096/0.09470/0.14593/0.07098/0.13255, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 14.43, 'speech_falarm': 3.75, 'speaker_scored': 535.18, 'speaker_miss': 33.91, 'speaker_falarm': 17.3, 'speaker_error': 13.37, 'correct': 435.07, 'diarization_error': 64.58, 'frames': 461.05, 'DER': 12.07, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-17 01:59:42,267 ] - Epoch:  16, LR: 0.0000100,            Training Loss: 0.06657/0.09345/0.14354/0.07020/0.13159, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 19.69, 'speech_falarm': 3.59, 'speaker_scored': 535.18, 'speaker_miss': 38.41, 'speaker_falarm': 16.61, 'speaker_error': 13.38, 'correct': 433.8, 'diarization_error': 68.39, 'frames': 461.05, 'DER': 12.78, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-17 09:30:42,982 ] - Epoch:  17, LR: 0.0000100,            Training Loss: 0.07124/0.09444/0.14398/0.07050/0.13291, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 11.55, 'speech_falarm': 3.91, 'speaker_scored': 535.18, 'speaker_miss': 27.86, 'speaker_falarm': 18.68, 'speaker_error': 13.7, 'correct': 436.41, 'diarization_error': 60.24, 'frames': 461.05, 'DER': 11.26, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-17 17:59:13,367 ] - Epoch:  18, LR: 0.0000100,            Training Loss: 0.07503/0.09527/0.14311/0.07080/0.13239, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 19.68, 'speech_falarm': 3.79, 'speaker_scored': 535.18, 'speaker_miss': 37.71, 'speaker_falarm': 18.2, 'speaker_error': 13.78, 'correct': 433.23, 'diarization_error': 69.7, 'frames': 461.05, 'DER': 13.02, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-18 04:22:40,675 ] - Epoch:  19, LR: 0.0000100,            Training Loss: 0.07178/0.09510/0.13914/0.07080/0.13247, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 19.24, 'speech_falarm': 3.58, 'speaker_scored': 535.18, 'speaker_miss': 34.57, 'speaker_falarm': 21.69, 'speaker_error': 11.34, 'correct': 434.74, 'diarization_error': 67.6, 'frames': 461.05, 'DER': 12.63, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-18 14:22:36,737 ] - Epoch:  20, LR: 0.0000100,            Training Loss: 0.06721/0.09490/0.13363/0.07064/0.13165, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 18.13, 'speech_falarm': 3.61, 'speaker_scored': 535.18, 'speaker_miss': 35.54, 'speaker_falarm': 17.96, 'speaker_error': 13.81, 'correct': 434.01, 'diarization_error': 67.31, 'frames': 461.05, 'DER': 12.58, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-18 14:22:37,457 ] - Finished!

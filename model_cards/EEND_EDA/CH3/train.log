@@ -1,0 +1,74 @@
+[ INFO : 2022-03-28 15:46:23,325 ] - namespace(config=[<yamlargparse.Path object at 0x7f6b314d09d0>], config2=[<yamlargparse.Path object at 0x7f6b314d8490>], feature_config=[<yamlargparse.Path object at 0x7f6b314d8a30>], train_data_dir='data/LibriSpeech/data/train_clean_360_nsv_90000', valid_data_dir='data/LibriSpeech/data/dev_clean_ns3_beta8_500', model_save_dir='exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000/adapt_callhome_3/gradclip_5_batchsize_32_num_frames_500_adam_lr_1e-4/models', model_type='EEND_EDA', initmodel='exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000/models/avg.th', resume=0, gpu=2, max_epochs=20, input_transform='logmel23_mn', lr=0.0001, optimizer='adam', num_speakers=3, gradclip=5, num_frames=500, batchsize=32, label_delay=0, hidden_size=256, in_size=345, rnn_cell='LSTM', chunk_size=0, shuffle_rate=0.0, inherit_from=None, loss_factor=None, context_size=7, subsampling=10, frame_size=200, frame_shift=80, sampling_rate=8000, noam_warmup_steps=100000, transformer_encoder_n_heads=4, transformer_encoder_n_layers=4, transformer_encoder_dropout=0.1, gradient_accumulation_steps=1, seed=777)
+[ INFO : 2022-03-28 15:47:23,028 ] - Prepared model
+[ INFO : 2022-03-28 15:47:23,028 ] - DataParallel(
+  (module): EEND_EDA(
+    (encoder): Linear(in_features=345, out_features=256, bias=True)
+    (encoder_norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+    (transformer_encoder): TransformerEncoder(
+      (layers): ModuleList(
+        (0): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (1): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (2): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (3): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+      )
+    )
+    (decoder): eda_spk_extractor(
+      (rnn_encoder): LSTM(256, 256, batch_first=True)
+      (attractor): LSTM(256, 256, batch_first=True)
+      (discriminator): Sequential(
+        (0): Linear(in_features=256, out_features=1, bias=True)
+        (1): Sigmoid()
+      )
+      (project): Linear(in_features=256, out_features=256, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+  )
+)
+[ INFO : 2022-03-28 15:47:23,036 ] - Load model from exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000/models/avg.th
+[ INFO : 2022-03-28 16:58:06,782 ] - Epoch:   1, LR: 0.0001000,            Training Loss: 0.10429/0.10969, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 7.25, 'speech_falarm': 3.05, 'speaker_scored': 535.18, 'speaker_miss': 25.42, 'speaker_falarm': 22.49, 'speaker_error': 7.98, 'correct': 439.76, 'diarization_error': 55.9, 'frames': 461.05, 'DER': 10.44, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-28 18:10:15,932 ] - Epoch:   2, LR: 0.0001000,            Training Loss: 0.22139/0.14545, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 13.2, 'speech_falarm': 2.5, 'speaker_scored': 535.18, 'speaker_miss': 39.77, 'speaker_falarm': 29.61, 'speaker_error': 16.34, 'correct': 427.03, 'diarization_error': 85.72, 'frames': 461.05, 'DER': 16.02, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}
+[ INFO : 2022-03-28 19:20:28,492 ] - Epoch:   3, LR: 0.0001000,            Training Loss: 0.10130/0.14184, Dev Stats: {'speech_scored': 353.41, 'speech_miss': 15.48, 'speech_falarm': 2.23, 'speaker_scored': 535.18, 'speaker_miss': 45.33, 'speaker_falarm': 35.75, 'speaker_error': 20.61, 'correct': 420.29, 'diarization_error': 101.69, 'frames': 461.05, 'DER': 19.0, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}

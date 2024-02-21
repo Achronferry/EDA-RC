@@ -1,0 +1,72 @@
+[ INFO : 2022-02-28 15:30:26,608 ] - namespace(batchsize=32, config=[<yamlargparse.Path object at 0x7fd9ce8af1d0>], config2=None, context_size=7, feature_config=[<yamlargparse.Path object at 0x7fd9ce8af630>], frame_shift=10, frame_size=200, gpu=2, gradclip=5, gradient_accumulation_steps=1, hidden_size=256, in_size=None, inherit_from=None, initmodel='', input_transform='logmel23_mn', label_delay=0, loss_factor=None, lr=1.0, max_epochs=51, model_save_dir='exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000/models', model_type='EEND_EDA', noam_warmup_steps=100000.0, num_frames=500, num_speakers=3, optimizer='noam', resume=50, rnn_cell='LSTM', sampling_rate=8000, seed=777, subsampling=10, train_data_dir='data/LibriSpeech/data/train_clean_360_ns3_beta8_100000', transformer_encoder_dropout=0.1, transformer_encoder_n_heads=4, transformer_encoder_n_layers=4, valid_data_dir='data/LibriSpeech/data/dev_clean_ns3_beta8_500')
+[ INFO : 2022-02-28 15:31:17,794 ] - Prepared model
+[ INFO : 2022-02-28 15:31:17,795 ] - DataParallel(
+  (module): EEND_EDA(
+    (encoder): Linear(in_features=345, out_features=256, bias=True)
+    (encoder_norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+    (transformer_encoder): TransformerEncoder(
+      (layers): ModuleList(
+        (0): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): _LinearWithBias(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (1): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): _LinearWithBias(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (2): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): _LinearWithBias(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+        (3): TransformerEncoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): _LinearWithBias(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+        )
+      )
+    )
+    (decoder): eda_spk_extractor(
+      (rnn_encoder): LSTM(256, 256, batch_first=True)
+      (attractor): LSTM(256, 256, batch_first=True)
+      (discriminator): Sequential(
+        (0): Linear(in_features=256, out_features=1, bias=True)
+        (1): Sigmoid()
+      )
+      (project): Linear(in_features=256, out_features=256, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+  )
+)
+[ INFO : 2022-02-28 15:31:18,474 ] - Load model from exp/LibriSpeech_3/EEND_EDA/gradclip_5_batchsize_32_num_frames_500_noam_lr_1.0_noam_warmup_steps_100000/models/transformer50.th
+[ INFO : 2022-02-28 15:34:21,161 ] - Epoch:  51,  Dev Stats: {'speech_scored': 42.52, 'speech_miss': 9.94, 'speech_falarm': 14.35, 'speaker_scored': 59.84, 'speaker_miss': 22.06, 'speaker_falarm': 34.03, 'speaker_error': 5.86, 'correct': 39.18, 'diarization_error': 61.95, 'frames': 61.78, 'DER': 103.52, 'change_recall': 0.0, 'change_precision': 0.0, 'num_pred_acc': 0.0}

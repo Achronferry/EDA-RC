@@ -1,0 +1,5 @@
+hidden_size: 256
+in_size: 345
+transformer_encoder_dropout: 0.1
+transformer_encoder_n_heads: 4
+transformer_encoder_n_layers: 4

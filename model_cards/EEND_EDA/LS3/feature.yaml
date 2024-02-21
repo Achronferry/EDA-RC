@@ -1,0 +1,6 @@
+sampling_rate: 8000
+frame_size: 200
+frame_shift: 10
+context_size: 7
+subsampling: 10
+input_transform: logmel23_mn
